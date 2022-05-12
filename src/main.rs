@@ -36,7 +36,8 @@ use rp2040_hal::gpio;
 type DTPin = gpio::Pin<gpio::bank0::Gpio0, gpio::PullUpInput>;
 type CLKPin = gpio::Pin<gpio::bank0::Gpio1, gpio::PullUpInput>;
 
-static GLOBAL_ROTARY_ENCODER: Mutex<RefCell<Option<RotaryEncoder<DTPin, CLKPin>>>> = Mutex::new(RefCell::new(None));
+static GLOBAL_ROTARY_ENCODER: Mutex<RefCell<Option<RotaryEncoder<DTPin, CLKPin>>>> =
+    Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -117,15 +118,17 @@ fn main() -> ! {
 
     let rotary_dt = pins.gpio0.into_pull_up_input();
     let rotary_clk = pins.gpio1.into_pull_up_input();
-	rotary_dt.set_interrupt_enabled(EdgeLow, true);
-	rotary_dt.set_interrupt_enabled(EdgeHigh, true);
-	rotary_clk.set_interrupt_enabled(EdgeLow, true);
-	rotary_clk.set_interrupt_enabled(EdgeHigh, true);
+    rotary_dt.set_interrupt_enabled(EdgeLow, true);
+    rotary_dt.set_interrupt_enabled(EdgeHigh, true);
+    rotary_clk.set_interrupt_enabled(EdgeLow, true);
+    rotary_clk.set_interrupt_enabled(EdgeHigh, true);
     // Initialize the rotary encoder
     let mut rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
-	// Give away rotary encoder object
-	cortex_m::interrupt::free(|cs| {
-        GLOBAL_ROTARY_ENCODER.borrow(cs).replace(Some(rotary_encoder));
+    // Give away rotary encoder object
+    cortex_m::interrupt::free(|cs| {
+        GLOBAL_ROTARY_ENCODER
+            .borrow(cs)
+            .replace(Some(rotary_encoder));
     });
 
     debug!("unmasking interrupts.");
@@ -137,7 +140,7 @@ fn main() -> ! {
 
     debug!("main loop starting.");
     loop {
-		cortex_m::asm::wfe();
+        cortex_m::asm::wfe();
         // Light the LED to indicate we saw an interrupt.
         led_pin.set_high().unwrap();
         delay.delay_ms(100);
@@ -147,15 +150,15 @@ fn main() -> ! {
 
 #[interrupt]
 fn IO_IRQ_BANK0() {
-	static mut ROTARY_ENCODER: Option<RotaryEncoder<DTPin, CLKPin>> = None;
+    static mut ROTARY_ENCODER: Option<RotaryEncoder<DTPin, CLKPin>> = None;
 
-	if ROTARY_ENCODER.is_none() {
-		cortex_m::interrupt::free(|cs| {
-			*ROTARY_ENCODER = GLOBAL_ROTARY_ENCODER.borrow(cs).take();
-		});
-	}
+    if ROTARY_ENCODER.is_none() {
+        cortex_m::interrupt::free(|cs| {
+            *ROTARY_ENCODER = GLOBAL_ROTARY_ENCODER.borrow(cs).take();
+        });
+    }
 
-	if let Some(rotary_encoder) = ROTARY_ENCODER {
+    if let Some(rotary_encoder) = ROTARY_ENCODER {
         // Update the encoder, which will compute its direction
         rotary_encoder.update();
         match rotary_encoder.direction() {
@@ -176,8 +179,8 @@ fn IO_IRQ_BANK0() {
                 // Do nothing
             }
         }
-	}
-	cortex_m::asm::sev();
+    }
+    cortex_m::asm::sev();
 }
 
 // USB Interrupt handler
@@ -187,5 +190,5 @@ unsafe fn USBCTRL_IRQ() {
     let usb_device = USB_DEVICE.as_mut().unwrap();
     let usb_serial = USB_SERIAL.as_mut().unwrap();
     usb_device.poll(&mut [usb_serial]);
-	cortex_m::asm::sev();
+    cortex_m::asm::sev();
 }
