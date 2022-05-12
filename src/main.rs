@@ -22,11 +22,21 @@ use usb_device::{class_prelude::*, prelude::*};
 use usbd_serial::SerialPort;
 
 use rotary_encoder_embedded::{Direction, RotaryEncoder};
+use rp2040_hal::gpio::Interrupt::EdgeHigh;
+use rp2040_hal::gpio::Interrupt::EdgeLow;
 
+use core::cell::RefCell;
+use cortex_m::interrupt::Mutex;
 // Global USB objects
 static mut USB_DEVICE: Option<UsbDevice<hal::usb::UsbBus>> = None;
 static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
 static mut USB_SERIAL: Option<SerialPort<hal::usb::UsbBus>> = None;
+
+use rp2040_hal::gpio;
+type DTPin = gpio::Pin<gpio::bank0::Gpio0, gpio::PullUpInput>;
+type CLKPin = gpio::Pin<gpio::bank0::Gpio1, gpio::PullUpInput>;
+
+static GLOBAL_ROTARY_ENCODER: Mutex<RefCell<Option<RotaryEncoder<DTPin, CLKPin>>>> = Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -104,32 +114,61 @@ fn main() -> ! {
     // Main loop
     //
     // We should unmask the relevant interrupts now, and avoid sync issues.
+
+    let rotary_dt = pins.gpio0.into_pull_up_input();
+    let rotary_clk = pins.gpio1.into_pull_up_input();
+	rotary_dt.set_interrupt_enabled(EdgeLow, true);
+	rotary_dt.set_interrupt_enabled(EdgeHigh, true);
+	rotary_clk.set_interrupt_enabled(EdgeLow, true);
+	rotary_clk.set_interrupt_enabled(EdgeHigh, true);
+    // Initialize the rotary encoder
+    let mut rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
+	// Give away rotary encoder object
+	cortex_m::interrupt::free(|cs| {
+        GLOBAL_ROTARY_ENCODER.borrow(cs).replace(Some(rotary_encoder));
+    });
+
     debug!("unmasking interrupts.");
     // USB
     unsafe {
         hal::pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
+        hal::pac::NVIC::unmask(hal::pac::Interrupt::IO_IRQ_BANK0);
     };
-
-    let rotary_dt = pins.gpio0.into_pull_up_input();
-    let rotary_clk = pins.gpio1.into_pull_up_input();
-    // Initialize the rotary encoder
-    let mut rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
 
     debug!("main loop starting.");
     loop {
+		cortex_m::asm::wfe();
+        // Light the LED to indicate we saw an interrupt.
+        led_pin.set_high().unwrap();
+        delay.delay_ms(100);
+        led_pin.set_low().unwrap();
+    }
+}
+
+#[interrupt]
+fn IO_IRQ_BANK0() {
+	static mut ROTARY_ENCODER: Option<RotaryEncoder<DTPin, CLKPin>> = None;
+
+	if ROTARY_ENCODER.is_none() {
+		cortex_m::interrupt::free(|cs| {
+			*ROTARY_ENCODER = GLOBAL_ROTARY_ENCODER.borrow(cs).take();
+		});
+	}
+
+	if let Some(rotary_encoder) = ROTARY_ENCODER {
         // Update the encoder, which will compute its direction
         rotary_encoder.update();
         match rotary_encoder.direction() {
             Direction::Clockwise => {
                 cortex_m::interrupt::free(|_| unsafe {
-                    USB_SERIAL.as_mut().unwrap().write(b"up\r\n")
+                    USB_SERIAL.as_mut().unwrap().write(b"ueep\r\n")
                 })
                 .unwrap();
                 // Increment some value
             }
             Direction::Anticlockwise => {
                 cortex_m::interrupt::free(|_| unsafe {
-                    USB_SERIAL.as_mut().unwrap().write(b"down\r\n")
+                    USB_SERIAL.as_mut().unwrap().write(b"eedown\r\n")
                 })
                 .unwrap();
             }
@@ -137,7 +176,8 @@ fn main() -> ! {
                 // Do nothing
             }
         }
-    }
+	}
+	cortex_m::asm::sev();
 }
 
 // USB Interrupt handler
@@ -147,4 +187,5 @@ unsafe fn USBCTRL_IRQ() {
     let usb_device = USB_DEVICE.as_mut().unwrap();
     let usb_serial = USB_SERIAL.as_mut().unwrap();
     usb_device.poll(&mut [usb_serial]);
+	cortex_m::asm::sev();
 }
