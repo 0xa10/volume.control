@@ -116,14 +116,15 @@ fn main() -> ! {
     //
     // We should unmask the relevant interrupts now, and avoid sync issues.
 
-    let rotary_dt = pins.gpio0.into_pull_up_input();
-    let rotary_clk = pins.gpio1.into_pull_up_input();
+	// Set up the pins and make sure they interrupt on both edges.
+    let rotary_dt = pins.gpio0.into_mode();
+    let rotary_clk = pins.gpio1.into_mode();
     rotary_dt.set_interrupt_enabled(EdgeLow, true);
     rotary_dt.set_interrupt_enabled(EdgeHigh, true);
     rotary_clk.set_interrupt_enabled(EdgeLow, true);
     rotary_clk.set_interrupt_enabled(EdgeHigh, true);
     // Initialize the rotary encoder
-    let mut rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
+    let rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
     // Give away rotary encoder object
     cortex_m::interrupt::free(|cs| {
         GLOBAL_ROTARY_ENCODER
@@ -159,8 +160,16 @@ fn IO_IRQ_BANK0() {
     }
 
     if let Some(rotary_encoder) = ROTARY_ENCODER {
-        // Update the encoder, which will compute its direction
+        // Read from the pins and then clear the interrupt
+		// TODO - can we tell (and should we care) which edge triggered our interrupt? Doing just one edge does not cover all cases.
         rotary_encoder.update();
+		let pins = rotary_encoder.borrow_pins();
+		
+		pins.0.clear_interrupt(EdgeHigh);
+		pins.0.clear_interrupt(EdgeLow);
+		pins.1.clear_interrupt(EdgeHigh);
+		pins.1.clear_interrupt(EdgeLow);
+
         match rotary_encoder.direction() {
             Direction::Clockwise => {
                 cortex_m::interrupt::free(|_| unsafe {
