@@ -5,9 +5,9 @@
 use core::cell::RefCell;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
-use embedded_time::fixed_point::FixedPoint;
-use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::digital::v2::InputPin;
+use embedded_hal::digital::v2::OutputPin;
+use embedded_time::fixed_point::FixedPoint;
 
 // Defmt is a microcontroller oriented formatting library
 use defmt::*;
@@ -17,8 +17,8 @@ use panic_probe as _;
 use rp_pico::hal;
 
 use hal::clocks::Clock;
-use hal::pac::interrupt;
 use hal::gpio;
+use hal::pac::interrupt;
 
 // USB Device support
 use hal::usb::UsbBus;
@@ -156,8 +156,8 @@ fn main() -> ! {
 
 #[interrupt]
 fn IO_IRQ_BANK0() {
-	// Claim the rotary encoder context first time this interrupt runs.
-	// It will not and cannot be used in the MCU thread any more.
+    // Claim the rotary encoder context first time this interrupt runs.
+    // It will not and cannot be used in the MCU thread any more.
     static mut ROTARY_ENCODER_CONTEXT: Option<RotaryEncoderContext> = None;
 
     if ROTARY_ENCODER_CONTEXT.is_none() {
@@ -167,48 +167,47 @@ fn IO_IRQ_BANK0() {
     }
 
     if let Some((rotary_encoder, switch_pin)) = ROTARY_ENCODER_CONTEXT {
-		if switch_pin.interrupt_status(gpio::Interrupt::EdgeLow) {
-			// A switch press
-			debug!("BANK0 interrupt from switch pin.");
-			// Read from the pins and then clear the interrupt
-			if switch_pin.is_low().unwrap() {
-				cortex_m::interrupt::free(|_| unsafe {
-					USB_SERIAL.as_mut().unwrap().write(b"clickkueep\r\n")
-				})
-				.unwrap();
-			}
-			switch_pin.clear_interrupt(gpio::Interrupt::EdgeLow);
-		} else {
-			// A rotation
-			rotary_encoder.update();
-			// TODO - concice logic for determining the origin of the
-			// interrupt - since it can be both edges on both pins.
-			// At the moment, we just clear all interrupts which is
-			// fine - its unlikely we'll be missing consecutive edges.	
-			let pins = rotary_encoder.borrow_pins();
-			pins.0.clear_interrupt(gpio::Interrupt::EdgeHigh);
-			pins.0.clear_interrupt(gpio::Interrupt::EdgeLow);
+        if switch_pin.interrupt_status(gpio::Interrupt::EdgeLow) {
+            // A switch press
+            debug!("BANK0 interrupt from switch pin.");
+            // Read from the pins and then clear the interrupt
+            if switch_pin.is_low().unwrap() {
+                cortex_m::interrupt::free(|_| unsafe {
+                    USB_SERIAL.as_mut().unwrap().write(b"clickkueep\r\n")
+                })
+                .unwrap();
+            }
+            switch_pin.clear_interrupt(gpio::Interrupt::EdgeLow);
+        } else {
+            // A rotation
+            rotary_encoder.update();
+            // TODO - concice logic for determining the origin of the
+            // interrupt - since it can be both edges on both pins.
+            // At the moment, we just clear all interrupts which is
+            // fine - its unlikely we'll be missing consecutive edges.
+            let pins = rotary_encoder.borrow_pins();
+            pins.0.clear_interrupt(gpio::Interrupt::EdgeHigh);
+            pins.0.clear_interrupt(gpio::Interrupt::EdgeLow);
 
-			pins.1.clear_interrupt(gpio::Interrupt::EdgeHigh);
-			pins.1.clear_interrupt(gpio::Interrupt::EdgeLow);
+            pins.1.clear_interrupt(gpio::Interrupt::EdgeHigh);
+            pins.1.clear_interrupt(gpio::Interrupt::EdgeLow);
 
-			match rotary_encoder.direction() {
-				Direction::Clockwise => {
-					cortex_m::interrupt::free(|_| unsafe {
-						USB_SERIAL.as_mut().unwrap().write(b"ueep\r\n")
-					})
-					.unwrap();
-				}
-				Direction::Anticlockwise => {
-					cortex_m::interrupt::free(|_| unsafe {
-						USB_SERIAL.as_mut().unwrap().write(b"eedown\r\n")
-					})
-					.unwrap();
-				}
-				Direction::None => {
-				}
-			}
-		}
+            match rotary_encoder.direction() {
+                Direction::Clockwise => {
+                    cortex_m::interrupt::free(|_| unsafe {
+                        USB_SERIAL.as_mut().unwrap().write(b"ueep\r\n")
+                    })
+                    .unwrap();
+                }
+                Direction::Anticlockwise => {
+                    cortex_m::interrupt::free(|_| unsafe {
+                        USB_SERIAL.as_mut().unwrap().write(b"eedown\r\n")
+                    })
+                    .unwrap();
+                }
+                Direction::None => {}
+            }
+        }
     }
     cortex_m::asm::sev();
 }
