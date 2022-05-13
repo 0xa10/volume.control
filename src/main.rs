@@ -181,11 +181,10 @@ fn IO_IRQ_BANK0() {
 		} else {
 			// A rotation
 			rotary_encoder.update();
-
-			// We don't really care which pin the interrupt came from.
-			// Any change in pin status indicates a rotation, and we
-			// can update and clear both interrupts - AFAIK this might
-			// cause us to miss out on a rotation but it seems unlikely
+			// TODO - concice logic for determining the origin of the
+			// interrupt - since it can be both edges on both pins.
+			// At the moment, we just clear all interrupts which is
+			// fine - its unlikely we'll be missing consecutive edges.	
 			let pins = rotary_encoder.borrow_pins();
 			pins.0.clear_interrupt(gpio::Interrupt::EdgeHigh);
 			pins.0.clear_interrupt(gpio::Interrupt::EdgeLow);
