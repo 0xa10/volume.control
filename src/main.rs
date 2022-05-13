@@ -23,14 +23,18 @@ use hal::pac::interrupt;
 // USB Device support
 use hal::usb::UsbBus;
 use usb_device::{class_prelude::*, prelude::*};
-use usbd_serial::SerialPort;
+// HID
+use usbd_hid::descriptor::generator_prelude::*;
+use usbd_hid::descriptor::MediaKeyboardReport;
+use usbd_hid::hid_class::HIDClass;
+
 
 use rotary_encoder_embedded::{Direction, RotaryEncoder};
 
 // Global USB objects
 static mut USB_DEVICE: Option<UsbDevice<hal::usb::UsbBus>> = None;
 static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
-static mut USB_SERIAL: Option<SerialPort<hal::usb::UsbBus>> = None;
+static mut USB_HID: Option<HIDClass<hal::usb::UsbBus>> = None;
 
 type DTPin = gpio::Pin<gpio::bank0::Gpio0, gpio::PullUpInput>;
 type CLKPin = gpio::Pin<gpio::bank0::Gpio1, gpio::PullUpInput>;
@@ -97,16 +101,16 @@ fn main() -> ! {
     let usb_bus_reference = unsafe { USB_BUS.as_ref().unwrap() }; // Not quite sure why this is needed, perhaps the old ref is moved?
 
     // Set up the driver
-    let usb_serial = SerialPort::new(usb_bus_reference);
+    let usb_hid = HIDClass::new(usb_bus_reference, MediaKeyboardReport::desc(), 10); // Very low polling interval
     unsafe {
-        USB_SERIAL = Some(usb_serial);
+        USB_HID = Some(usb_hid);
     }
 
     let usb_device = UsbDeviceBuilder::new(usb_bus_reference, UsbVidPid(0x1337, 0xb00b))
         .manufacturer("Pini")
         .product("Grigioer")
         .serial_number("1234")
-        .device_class(2) // from: https://www.usb.org/defined-class-codes
+        .device_class(0xef) // from: https://www.usb.org/defined-class-codes
         .build();
     unsafe {
         // Set the global USB_BUS object
@@ -172,10 +176,7 @@ fn IO_IRQ_BANK0() {
             debug!("BANK0 interrupt from switch pin.");
             // Read from the pins and then clear the interrupt
             if switch_pin.is_low().unwrap() {
-                cortex_m::interrupt::free(|_| unsafe {
-                    USB_SERIAL.as_mut().unwrap().write(b"clickkueep\r\n")
-                })
-                .unwrap();
+				send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xe2 }).unwrap();
             }
             switch_pin.clear_interrupt(gpio::Interrupt::EdgeLow);
         } else {
@@ -194,16 +195,10 @@ fn IO_IRQ_BANK0() {
 
             match rotary_encoder.direction() {
                 Direction::Clockwise => {
-                    cortex_m::interrupt::free(|_| unsafe {
-                        USB_SERIAL.as_mut().unwrap().write(b"ueep\r\n")
-                    })
-                    .unwrap();
+					send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xE9 }).unwrap();
                 }
                 Direction::Anticlockwise => {
-                    cortex_m::interrupt::free(|_| unsafe {
-                        USB_SERIAL.as_mut().unwrap().write(b"eedown\r\n")
-                    })
-                    .unwrap();
+					send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xEA }).unwrap();
                 }
                 Direction::None => {}
             }
@@ -212,12 +207,19 @@ fn IO_IRQ_BANK0() {
     cortex_m::asm::sev();
 }
 
+fn send_media_keyboard_report(report: MediaKeyboardReport) -> Result<usize, usb_device::UsbError> {
+	cortex_m::interrupt::free(|_| unsafe {
+        USB_HID.as_mut().map(|hid| hid.push_input(&report))
+    })
+    .unwrap()
+}
+
 // USB Interrupt handler
 #[allow(non_snake_case)]
 #[interrupt]
 unsafe fn USBCTRL_IRQ() {
     let usb_device = USB_DEVICE.as_mut().unwrap();
-    let usb_serial = USB_SERIAL.as_mut().unwrap();
-    usb_device.poll(&mut [usb_serial]);
+    let usb_hid = USB_HID.as_mut().unwrap();
+    usb_device.poll(&mut [usb_hid]);
     cortex_m::asm::sev();
 }
