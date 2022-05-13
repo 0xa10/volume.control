@@ -28,7 +28,6 @@ use usbd_hid::descriptor::generator_prelude::*;
 use usbd_hid::descriptor::MediaKeyboardReport;
 use usbd_hid::hid_class::HIDClass;
 
-
 use rotary_encoder_embedded::{Direction, RotaryEncoder};
 
 // Global USB objects
@@ -176,7 +175,7 @@ fn IO_IRQ_BANK0() {
             debug!("BANK0 interrupt from switch pin.");
             // Read from the pins and then clear the interrupt
             if switch_pin.is_low().unwrap() {
-				send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xe2 }).unwrap();
+                send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xe2 }).unwrap();
             }
             switch_pin.clear_interrupt(gpio::Interrupt::EdgeLow);
         } else {
@@ -195,10 +194,10 @@ fn IO_IRQ_BANK0() {
 
             match rotary_encoder.direction() {
                 Direction::Clockwise => {
-					send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xE9 }).unwrap();
+                    send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xE9 }).unwrap();
                 }
                 Direction::Anticlockwise => {
-					send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xEA }).unwrap();
+                    send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xEA }).unwrap();
                 }
                 Direction::None => {}
             }
@@ -208,10 +207,8 @@ fn IO_IRQ_BANK0() {
 }
 
 fn send_media_keyboard_report(report: MediaKeyboardReport) -> Result<usize, usb_device::UsbError> {
-	cortex_m::interrupt::free(|_| unsafe {
-        USB_HID.as_mut().map(|hid| hid.push_input(&report))
-    })
-    .unwrap()
+    cortex_m::interrupt::free(|_| unsafe { USB_HID.as_mut().map(|hid| hid.push_input(&report)) })
+        .unwrap()
 }
 
 // USB Interrupt handler
