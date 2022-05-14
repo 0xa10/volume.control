@@ -3,6 +3,7 @@
 
 // Rust Embedded stuff
 use core::cell::RefCell;
+use core::ops::DerefMut;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::InputPin;
@@ -33,10 +34,10 @@ use rotary_encoder_embedded::{Direction, RotaryEncoder};
 // Global USB objects
 static mut USB_DEVICE: Option<UsbDevice<hal::usb::UsbBus>> = None;
 static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
-static mut USB_HID: Option<HIDClass<hal::usb::UsbBus>> = None;
+static USB_HID: Mutex<RefCell<Option<HIDClass<hal::usb::UsbBus>>>> = Mutex::new(RefCell::new(None));
 
-type DTPin = gpio::Pin<gpio::bank0::Gpio0, gpio::PullUpInput>;
-type CLKPin = gpio::Pin<gpio::bank0::Gpio1, gpio::PullUpInput>;
+type DTPin = gpio::Pin<gpio::bank0::Gpio3, gpio::PullUpInput>;
+type CLKPin = gpio::Pin<gpio::bank0::Gpio4, gpio::PullUpInput>;
 type SwitchPin = gpio::Pin<gpio::bank0::Gpio2, gpio::PullUpInput>;
 
 type RotaryEncoderContext = (RotaryEncoder<DTPin, CLKPin>, SwitchPin);
@@ -100,10 +101,11 @@ fn main() -> ! {
     let usb_bus_reference = unsafe { USB_BUS.as_ref().unwrap() }; // Not quite sure why this is needed, perhaps the old ref is moved?
 
     // Set up the driver
-    let usb_hid = HIDClass::new(usb_bus_reference, MediaKeyboardReport::desc(), 10); // Very low polling interval
-    unsafe {
-        USB_HID = Some(usb_hid);
-    }
+    let usb_hid = HIDClass::new(usb_bus_reference, MediaKeyboardReport::desc(), 100); // Very low polling interval
+                                                                                      // Give away rotary encoder object
+    cortex_m::interrupt::free(|cs| {
+        USB_HID.borrow(cs).replace(Some(usb_hid));
+    });
 
     let usb_device = UsbDeviceBuilder::new(usb_bus_reference, UsbVidPid(0x1337, 0xb00b))
         .manufacturer("Pini")
@@ -117,11 +119,11 @@ fn main() -> ! {
     }
 
     // Set up the pins and make sure they interrupt on both edges.
-    let rotary_dt = pins.gpio0.into_mode();
+    let rotary_dt = pins.gpio3.into_mode();
     rotary_dt.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
     rotary_dt.set_interrupt_enabled(gpio::Interrupt::EdgeHigh, true);
 
-    let rotary_clk = pins.gpio1.into_mode();
+    let rotary_clk = pins.gpio4.into_mode();
     rotary_clk.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
     rotary_clk.set_interrupt_enabled(gpio::Interrupt::EdgeHigh, true);
 
@@ -140,6 +142,7 @@ fn main() -> ! {
     //
     // Interrupt unmasking and Main loop
     //
+	info!("sup");
     debug!("unmasking interrupts.");
     // USB
     unsafe {
@@ -154,6 +157,7 @@ fn main() -> ! {
         led_pin.set_high().unwrap();
         delay.delay_ms(100);
         led_pin.set_low().unwrap();
+        //send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xe2 });
     }
 }
 
@@ -175,7 +179,7 @@ fn IO_IRQ_BANK0() {
             debug!("BANK0 interrupt from switch pin.");
             // Read from the pins and then clear the interrupt
             if switch_pin.is_low().unwrap() {
-                send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xe2 }).unwrap();
+                send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xe2 });
             }
             switch_pin.clear_interrupt(gpio::Interrupt::EdgeLow);
         } else {
@@ -194,10 +198,10 @@ fn IO_IRQ_BANK0() {
 
             match rotary_encoder.direction() {
                 Direction::Clockwise => {
-                    send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xE9 }).unwrap();
+                    send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xE9 });
                 }
                 Direction::Anticlockwise => {
-                    send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xEA }).unwrap();
+                    send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xEA });
                 }
                 Direction::None => {}
             }
@@ -207,8 +211,12 @@ fn IO_IRQ_BANK0() {
 }
 
 fn send_media_keyboard_report(report: MediaKeyboardReport) -> Result<usize, usb_device::UsbError> {
-    cortex_m::interrupt::free(|_| unsafe { USB_HID.as_mut().map(|hid| hid.push_input(&report)) })
-        .unwrap()
+    cortex_m::interrupt::free(|cs| {
+        if let Some(ref mut usb_hid) = USB_HID.borrow(cs).borrow_mut().deref_mut() {
+            return usb_hid.push_input(&report);
+        }
+		Ok(0)
+    })
 }
 
 // USB Interrupt handler
@@ -216,7 +224,9 @@ fn send_media_keyboard_report(report: MediaKeyboardReport) -> Result<usize, usb_
 #[interrupt]
 unsafe fn USBCTRL_IRQ() {
     let usb_device = USB_DEVICE.as_mut().unwrap();
-    let usb_hid = USB_HID.as_mut().unwrap();
-    usb_device.poll(&mut [usb_hid]);
-    cortex_m::asm::sev();
+    cortex_m::interrupt::free(|cs| {
+        if let Some(ref mut usb_hid) = USB_HID.borrow(cs).borrow_mut().deref_mut() {
+            usb_device.poll(&mut [usb_hid]);
+        }
+    });
 }
