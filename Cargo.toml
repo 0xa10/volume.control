@@ -1,5 +1,5 @@
 [package]
-name = "rp2040-fw"
+name = "rp2040-volume-knob"
 version = "0.1.0"
 edition = "2021"
 

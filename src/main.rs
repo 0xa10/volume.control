@@ -33,7 +33,8 @@ use rotary_encoder_embedded::{Direction, RotaryEncoder};
 
 // Global USB objects
 static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
-static USB_DEVICE: Mutex<RefCell<Option<UsbDevice<hal::usb::UsbBus>>>> = Mutex::new(RefCell::new(None));
+static USB_DEVICE: Mutex<RefCell<Option<UsbDevice<hal::usb::UsbBus>>>> =
+    Mutex::new(RefCell::new(None));
 static USB_HID: Mutex<RefCell<Option<HIDClass<hal::usb::UsbBus>>>> = Mutex::new(RefCell::new(None));
 
 type DTPin = gpio::Pin<gpio::bank0::Gpio3, gpio::PullUpInput>;
@@ -95,11 +96,11 @@ fn main() -> ! {
         &mut pac.RESETS,
     ));
 
-	// This is how we give the usb bus a static lifetime - TODO - figure out a nicer way to do this.
-	let usb_bus_reference = unsafe {
-		USB_BUS = Some(usb_bus);
-		USB_BUS.as_ref().unwrap()
-	};
+    // This is how we give the usb bus a static lifetime - TODO - figure out a nicer way to do this.
+    let usb_bus_reference = unsafe {
+        USB_BUS = Some(usb_bus);
+        USB_BUS.as_ref().unwrap()
+    };
 
     // Set up the driver
     let usb_hid = HIDClass::new(usb_bus_reference, MediaKeyboardReport::desc(), 100); // Very low polling interval
@@ -139,7 +140,6 @@ fn main() -> ! {
     //
     // Interrupt unmasking and Main loop
     //
-    info!("sup");
     debug!("unmasking interrupts.");
     // USB
     unsafe {
@@ -208,8 +208,9 @@ fn send_media_keyboard_report(report: MediaKeyboardReport) {
     if let Err(_err) = cortex_m::interrupt::free(|cs| {
         if let Some(ref mut usb_hid) = USB_HID.borrow(cs).borrow().as_ref() {
             return usb_hid.push_input(&report);
+        } else {
+            warn!("Could not borrow USB_HID reference! Proceeding.");
         }
-        warn!("Could not borrow USB_HID reference! Proceeding.");
         Ok(0) // TODO - this can only occur if we failed to borrow a ref, per
     }) {
         error!("Error sending media keyboard report."); // {:?}", err);
@@ -221,11 +222,15 @@ fn send_media_keyboard_report(report: MediaKeyboardReport) {
 #[interrupt]
 unsafe fn USBCTRL_IRQ() {
     cortex_m::interrupt::free(|cs| {
-		if let Some(usb_device) = USB_DEVICE.borrow(cs).borrow_mut().deref_mut() {
-			if let Some(usb_hid) = USB_HID.borrow(cs).borrow_mut().deref_mut() {
-				usb_device.poll(&mut [usb_hid]);
-			} else { warn!("Could not borrow USB_HID reference!. Proceeding."); }
-		} else { warn!("Could not borrow USB_DEVICE reference!. Proceeding."); }
+        if let Some(usb_device) = USB_DEVICE.borrow(cs).borrow_mut().deref_mut() {
+            if let Some(usb_hid) = USB_HID.borrow(cs).borrow_mut().deref_mut() {
+                usb_device.poll(&mut [usb_hid]);
+            } else {
+                warn!("Could not borrow USB_HID reference!. Proceeding.");
+            }
+        } else {
+            warn!("Could not borrow USB_DEVICE reference!. Proceeding.");
+        }
     });
     cortex_m::asm::sev();
 }
