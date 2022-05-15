@@ -50,7 +50,7 @@ mod app {
 			usb_bus: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit(),
 		])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
-		info!("Starting init");
+        info!("Starting init");
         let mut resets = cx.device.RESETS;
         let mut watchdog = hal::watchdog::Watchdog::new(cx.device.WATCHDOG);
 
@@ -167,7 +167,7 @@ mod app {
         (cx.shared.usb_device, cx.shared.usb_hid).lock(|usb_device, usb_hid| {
             usb_device.poll(&mut [usb_hid]);
         });
-		toggle_led::spawn(true).ok(); // Blink the led
+        toggle_led::spawn(true).ok(); // Blink the led
     }
 
     #[task(shared = [usb_device, usb_hid])]
