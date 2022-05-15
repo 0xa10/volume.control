@@ -1,236 +1,183 @@
 #![no_std]
 #![no_main]
 
-// Rust Embedded stuff
-use core::cell::RefCell;
-use core::ops::DerefMut;
-use cortex_m::interrupt::Mutex;
-use cortex_m_rt::entry;
-use embedded_hal::digital::v2::InputPin;
-use embedded_hal::digital::v2::OutputPin;
-use embedded_time::fixed_point::FixedPoint;
-
-// Defmt is a microcontroller oriented formatting library
-use defmt::*;
 use defmt_rtt as _;
 use panic_probe as _;
 
-use rp_pico::hal;
+#[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [XIP_IRQ])]
+mod app {
 
-use hal::clocks::Clock;
-use hal::gpio;
-use hal::pac::interrupt;
+	use embedded_hal::digital::v2::InputPin;
+    use embedded_hal::digital::v2::OutputPin;
+	use embedded_hal::digital::v2::ToggleableOutputPin;
+	use core::mem::MaybeUninit;
+	use defmt::{info, debug, error, warn};
 
-// USB Device support
-use hal::usb::UsbBus;
-use usb_device::{class_prelude::*, prelude::*};
-// HID
-use usbd_hid::descriptor::generator_prelude::*;
-use usbd_hid::descriptor::MediaKeyboardReport;
-use usbd_hid::hid_class::HIDClass;
+	use rp2040_monotonic::*;
+    use rp_pico::hal;
+    use rp_pico::XOSC_CRYSTAL_FREQ;
 
-use rotary_encoder_embedded::{Direction, RotaryEncoder};
+	use hal::usb::UsbBus;
+	use usb_device::{class_prelude::*, prelude::*};
 
-// Global USB objects
-static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
-static USB_DEVICE: Mutex<RefCell<Option<UsbDevice<hal::usb::UsbBus>>>> =
-    Mutex::new(RefCell::new(None));
-static USB_HID: Mutex<RefCell<Option<HIDClass<hal::usb::UsbBus>>>> = Mutex::new(RefCell::new(None));
+	use usbd_hid::descriptor::generator_prelude::*;
+	use usbd_hid::descriptor::MediaKeyboardReport;
+	use usbd_hid::hid_class::HIDClass;
 
-type DTPin = gpio::Pin<gpio::bank0::Gpio3, gpio::PullUpInput>;
-type CLKPin = gpio::Pin<gpio::bank0::Gpio4, gpio::PullUpInput>;
-type SwitchPin = gpio::Pin<gpio::bank0::Gpio2, gpio::PullUpInput>;
+	use rotary_encoder_embedded::{Direction, RotaryEncoder};
 
-type RotaryEncoderContext = (RotaryEncoder<DTPin, CLKPin>, SwitchPin);
+	#[monotonic(binds = TIMER_IRQ_0, default = true)]
+    type Monotonic = Rp2040Monotonic;
+	type LedPin = hal::gpio::Pin<hal::gpio::pin::bank0::Gpio25, hal::gpio::PushPullOutput>;
+	type SwitchPin = hal::gpio::Pin<hal::gpio::bank0::Gpio2, hal::gpio::PullUpInput>;
+	type DTPin = hal::gpio::Pin<hal::gpio::bank0::Gpio3, hal::gpio::PullUpInput>;
+	type CLKPin = hal::gpio::Pin<hal::gpio::bank0::Gpio4, hal::gpio::PullUpInput>;
 
-static GLOBAL_ROTARY_ENCODER_CONTEXT: Mutex<RefCell<Option<RotaryEncoderContext>>> =
-    Mutex::new(RefCell::new(None));
+    #[shared]
+    struct Shared {
+		usb_hid: HIDClass<'static, hal::usb::UsbBus>,
+		usb_device: UsbDevice<'static, UsbBus>,
+	}
 
-#[entry]
-fn main() -> ! {
-    //
-    // Setup
-    //
-    let mut pac = hal::pac::Peripherals::take().unwrap(); // Todo - find a better pattern than unwrap, very unrustlike
-    let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
-    let sio = hal::sio::Sio::new(pac.SIO);
-
-    // External high-speed crystal on the pico board is 12Mhz
-    let xtal_freq_hz = rp_pico::XOSC_CRYSTAL_FREQ;
-
-    let clocks = hal::clocks::init_clocks_and_plls(
-        xtal_freq_hz,
-        pac.XOSC,
-        pac.CLOCKS,
-        pac.PLL_SYS,
-        pac.PLL_USB,
-        &mut pac.RESETS,
-        &mut watchdog,
-    )
-    .ok()
-    .unwrap();
-
-    //
-    // Auxiliary objects
-    //
-    let core = hal::pac::CorePeripherals::take().unwrap();
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
-
-    // Pin setup
-    let pins = rp_pico::Pins::new(
-        pac.IO_BANK0,
-        pac.PADS_BANK0,
-        sio.gpio_bank0,
-        &mut pac.RESETS,
-    );
-    let mut led_pin = pins.led.into_push_pull_output();
-
-    //
-    // USB setup, bus, device, and driver
-
-    let usb_bus = UsbBusAllocator::new(UsbBus::new(
-        pac.USBCTRL_REGS,
-        pac.USBCTRL_DPRAM,
-        clocks.usb_clock,
-        true,
-        &mut pac.RESETS,
-    ));
-
-    // This is how we give the usb bus a static lifetime - TODO - figure out a nicer way to do this.
-    let usb_bus_reference = unsafe {
-        USB_BUS = Some(usb_bus);
-        USB_BUS.as_ref().unwrap()
-    };
-
-    // Set up the driver
-    let usb_hid = HIDClass::new(usb_bus_reference, MediaKeyboardReport::desc(), 100); // Very low polling interval
-    let usb_device = UsbDeviceBuilder::new(usb_bus_reference, UsbVidPid(0x1337, 0xb00b))
-        .manufacturer("Pini")
-        .product("Grigioer")
-        .serial_number("1234")
-        .device_class(0xef) // from: https://www.usb.org/defined-class-codes
-        .build();
-
-    cortex_m::interrupt::free(|cs| {
-        USB_HID.borrow(cs).replace(Some(usb_hid));
-        USB_DEVICE.borrow(cs).replace(Some(usb_device));
-    });
-
-    // Set up the pins and make sure they interrupt on both edges.
-    let rotary_dt = pins.gpio3.into_mode();
-    rotary_dt.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
-    rotary_dt.set_interrupt_enabled(gpio::Interrupt::EdgeHigh, true);
-
-    let rotary_clk = pins.gpio4.into_mode();
-    rotary_clk.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
-    rotary_clk.set_interrupt_enabled(gpio::Interrupt::EdgeHigh, true);
-
-    let switch_pin = pins.gpio2.into_mode();
-    switch_pin.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
-
-    // Initialize the rotary encoder
-    let rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
-    // Give away rotary encoder object
-    cortex_m::interrupt::free(|cs| {
-        GLOBAL_ROTARY_ENCODER_CONTEXT
-            .borrow(cs)
-            .replace(Some((rotary_encoder, switch_pin)));
-    });
-
-    //
-    // Interrupt unmasking and Main loop
-    //
-    debug!("unmasking interrupts.");
-    // USB
-    unsafe {
-        hal::pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
-        hal::pac::NVIC::unmask(hal::pac::Interrupt::IO_IRQ_BANK0);
-    };
-
-    debug!("main loop starting.");
-    loop {
-        cortex_m::asm::wfe();
-        // Light the LED to indicate we saw an interrupt.
-        led_pin.set_high().unwrap();
-        delay.delay_ms(100);
-        led_pin.set_low().unwrap();
-    }
-}
-
-#[interrupt]
-fn IO_IRQ_BANK0() {
-    // Claim the rotary encoder context first time this interrupt runs.
-    // It will not and cannot be used in the MCU thread any more.
-    static mut ROTARY_ENCODER_CONTEXT: Option<RotaryEncoderContext> = None;
-
-    if ROTARY_ENCODER_CONTEXT.is_none() {
-        cortex_m::interrupt::free(|cs| {
-            *ROTARY_ENCODER_CONTEXT = GLOBAL_ROTARY_ENCODER_CONTEXT.borrow(cs).take();
-        });
+    #[local]
+    struct Local {
+        led: LedPin,
+		switch_pin: SwitchPin,
+		rotary_encoder: RotaryEncoder<DTPin, CLKPin>,
     }
 
-    if let Some((rotary_encoder, switch_pin)) = ROTARY_ENCODER_CONTEXT {
-        if switch_pin.interrupt_status(gpio::Interrupt::EdgeLow) {
-            // A switch press
-            debug!("BANK0 interrupt from switch pin.");
-            // Read from the pins and then clear the interrupt
-            if switch_pin.is_low().unwrap() {
-                send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xe2 });
-            }
-            switch_pin.clear_interrupt(gpio::Interrupt::EdgeLow);
-        } else {
-            // A rotation
-            rotary_encoder.update();
+	#[init(local = [
+			usb_bus: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit(),
+		])]
+    fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
 
-            // Clear all encoder pins
+		error!("error test");
+		debug!("debug test");
+		info!("init starting");
+		let mut resets = cx.device.RESETS;
+        let mut watchdog = hal::watchdog::Watchdog::new(cx.device.WATCHDOG);
+
+        let clocks = hal::clocks::init_clocks_and_plls(
+            XOSC_CRYSTAL_FREQ,
+            cx.device.XOSC,
+            cx.device.CLOCKS,
+            cx.device.PLL_SYS,
+            cx.device.PLL_USB,
+            &mut resets,
+            &mut watchdog,
+        )
+        .ok()
+        .unwrap();
+
+        let sio = hal::Sio::new(cx.device.SIO);
+        let pins = rp_pico::Pins::new(
+            cx.device.IO_BANK0,
+            cx.device.PADS_BANK0,
+            sio.gpio_bank0,
+            &mut resets,
+        );
+        let mut led = pins.led.into_push_pull_output();
+        led.set_low().unwrap();
+
+		// Set up the pins and make sure they interrupt on both edges.
+		let rotary_dt: DTPin = pins.gpio3.into_mode();
+		rotary_dt.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
+		rotary_dt.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
+
+		let rotary_clk: CLKPin = pins.gpio4.into_mode();
+		rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
+		rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
+		let rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
+		let switch_pin = pins.gpio2.into_mode();
+		switch_pin.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
+		let usb_bus: &'static _ = cx.local.usb_bus.write(UsbBusAllocator::new(UsbBus::new(
+				cx.device.USBCTRL_REGS,
+				cx.device.USBCTRL_DPRAM,
+				clocks.usb_clock,
+				true,
+				&mut resets,
+		)));
+		let usb_hid = HIDClass::new(usb_bus, MediaKeyboardReport::desc(), 10);
+
+		let usb_device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x1209, 0x4853))
+            .manufacturer("Blah")
+            .product("abc")
+            .device_class(0)
+            .max_packet_size_0(64)
+            .max_power(500)
+            .build();
+
+        (
+            Shared {
+				usb_hid,
+				usb_device,
+			},
+            Local {
+				led,
+				switch_pin,
+				rotary_encoder,
+            },
+            init::Monotonics(Rp2040Monotonic::new(cx.device.TIMER)),
+        )
+    }
+
+#[task(binds = IO_IRQ_BANK0, local = [rotary_encoder, switch_pin])]
+	fn on_gpio(cx: on_gpio::Context) {
+		let switch_pin = cx.local.switch_pin;
+		let rotary_encoder = cx.local.rotary_encoder;
+		if switch_pin.interrupt_status(hal::gpio::Interrupt::EdgeLow) {
+			if let Ok(switch_pin_state) = switch_pin.is_low() {
+				if switch_pin_state {
+					if let Err(_) = send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xE2} ) {
+						warn!("Failed to dispatch media key for switch");
+					}
+				}
+			}
+			switch_pin.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
+		} else {
+			rotary_encoder.update();
             let pins = rotary_encoder.borrow_pins();
-            pins.0.clear_interrupt(gpio::Interrupt::EdgeHigh);
-            pins.0.clear_interrupt(gpio::Interrupt::EdgeLow);
+            pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
+            pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
 
-            pins.1.clear_interrupt(gpio::Interrupt::EdgeHigh);
-            pins.1.clear_interrupt(gpio::Interrupt::EdgeLow);
+            pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
+            pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
 
             match rotary_encoder.direction() {
                 Direction::Clockwise => {
-                    send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xE9 });
+					if let Err(_) = send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xE9}) {
+						warn!("Failed to dispatch media key for switch");
+					}
                 }
                 Direction::Anticlockwise => {
-                    send_media_keyboard_report(MediaKeyboardReport { usage_id: 0xEA });
+					if let Err(_) = send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xEA}) {
+						warn!("Failed to dispatch media key for switch");
+					}
                 }
                 Direction::None => {}
             }
-        }
-    }
-    cortex_m::asm::sev();
+		}
+	}
+#[task(binds = USBCTRL_IRQ, shared = [usb_device, usb_hid])]
+    fn on_usb(cx: on_usb::Context) {
+		debug!("Entered USB IRQ");
+		(cx.shared.usb_device, cx.shared.usb_hid).lock(|usb_device, usb_hid| {
+			usb_device.poll(&mut [usb_hid]);
+		});
+	}
+
+#[task(shared = [usb_device, usb_hid])]
+    fn send_media_key_report(mut cx: send_media_key_report::Context, report: MediaKeyboardReport) {
+		debug!("Sending usage id: {:#02x}.", report.usage_id as u16);
+		cx.shared.usb_hid.lock(|usb_hid| usb_hid.push_input(&report).unwrap());
+		toggle_led::spawn(true).ok(); // Blink the led
 }
 
-fn send_media_keyboard_report(report: MediaKeyboardReport) {
-    if let Err(_err) = cortex_m::interrupt::free(|cs| {
-        if let Some(ref mut usb_hid) = USB_HID.borrow(cs).borrow().as_ref() {
-            return usb_hid.push_input(&report);
-        } else {
-            warn!("Could not borrow USB_HID reference! Proceeding.");
-        }
-        Ok(0) // TODO - this can only occur if we failed to borrow a ref, per
-    }) {
-        error!("Error sending media keyboard report."); // {:?}", err);
+#[task(local = [led])]
+    fn toggle_led(cx: toggle_led::Context, blink: bool) {
+        cx.local.led.toggle().ok();
+		if blink {
+			toggle_led::spawn_after(100.millis(), false).ok();
+		}
     }
-}
-
-// USB Interrupt handler
-#[allow(non_snake_case)]
-#[interrupt]
-unsafe fn USBCTRL_IRQ() {
-    cortex_m::interrupt::free(|cs| {
-        if let Some(usb_device) = USB_DEVICE.borrow(cs).borrow_mut().deref_mut() {
-            if let Some(usb_hid) = USB_HID.borrow(cs).borrow_mut().deref_mut() {
-                usb_device.poll(&mut [usb_hid]);
-            } else {
-                warn!("Could not borrow USB_HID reference!. Proceeding.");
-            }
-        } else {
-            warn!("Could not borrow USB_DEVICE reference!. Proceeding.");
-        }
-    });
-    cortex_m::asm::sev();
 }
