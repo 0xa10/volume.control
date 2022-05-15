@@ -1,11 +1,7 @@
-# RP2040 volume control
+# RP2040 volume control - RTIC
 
-A simple volume control firmware for the RP2040 - developed on the Pico
-
-I opted to write this in a relatively simple interrupt-driven flow, using the GPIO BANK0 interrupt handler to check the pins on a clickable rotary encoder and dispatch USB-HID reports accordingly.
-The USB_IRQ is just used to poll the USB device.
-
-For more complex use-cases it's probably to use RTIC, and bind one of the timers for a watchdog.
+This is a more intricate version of the [rp2040-volume-knob][https://github.com/0xa10/rp2040-volume-knob] using the RTIC framwork.
+Everything is essentialy the same, except no more unsafe code and no more interrupt-free closures - the RTIC framework provides a dispatcher.
 
 # Usage
 ## Deployment

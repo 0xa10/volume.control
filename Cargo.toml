@@ -1,5 +1,5 @@
 [package]
-name = "rp2040-volume-knob"
+name = "rp2040-volume-knob-rtic"
 version = "0.1.0"
 edition = "2021"
 
