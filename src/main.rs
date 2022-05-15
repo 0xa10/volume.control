@@ -8,7 +8,7 @@ use panic_probe as _;
 mod app {
 
     use core::mem::MaybeUninit;
-    use defmt::{debug, error, info, warn};
+    use defmt::{debug, info, warn};
     use embedded_hal::digital::v2::InputPin;
     use embedded_hal::digital::v2::OutputPin;
     use embedded_hal::digital::v2::ToggleableOutputPin;
@@ -50,9 +50,7 @@ mod app {
 			usb_bus: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit(),
 		])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
-        error!("error test");
-        debug!("debug test");
-        info!("init starting");
+		info!("Starting init");
         let mut resets = cx.device.RESETS;
         let mut watchdog = hal::watchdog::Watchdog::new(cx.device.WATCHDOG);
 
@@ -99,9 +97,9 @@ mod app {
         let usb_hid = HIDClass::new(usb_bus, MediaKeyboardReport::desc(), 10);
 
         let usb_device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x1209, 0x4853))
-            .manufacturer("Blah")
-            .product("abc")
-            .device_class(0)
+            .manufacturer("pini.grigio")
+            .product("volume.control")
+            .device_class(0x3)
             .max_packet_size_0(64)
             .max_power(500)
             .build();
@@ -169,6 +167,7 @@ mod app {
         (cx.shared.usb_device, cx.shared.usb_hid).lock(|usb_device, usb_hid| {
             usb_device.poll(&mut [usb_hid]);
         });
+		toggle_led::spawn(true).ok(); // Blink the led
     }
 
     #[task(shared = [usb_device, usb_hid])]
@@ -176,8 +175,7 @@ mod app {
         debug!("Sending usage id: {:#02x}.", report.usage_id as u16);
         cx.shared
             .usb_hid
-            .lock(|usb_hid| usb_hid.push_input(&report).unwrap());
-        toggle_led::spawn(true).ok(); // Blink the led
+            .lock(|usb_hid| usb_hid.push_input(&report).ok());
     }
 
     #[task(local = [led])]
