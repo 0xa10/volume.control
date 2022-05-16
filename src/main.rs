@@ -4,7 +4,7 @@
 use defmt_rtt as _;
 use panic_probe as _;
 
-#[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [XIP_IRQ])]
+#[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [XIP_IRQ, PIO0_IRQ_0])]
 mod app {
 
     use core::mem::MaybeUninit;
@@ -161,7 +161,7 @@ mod app {
             }
         }
     }
-    #[task(binds = USBCTRL_IRQ, shared = [usb_device, usb_hid])]
+    #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
     fn on_usb(cx: on_usb::Context) {
         debug!("Entered USB IRQ");
         (cx.shared.usb_device, cx.shared.usb_hid).lock(|usb_device, usb_hid| {
@@ -170,7 +170,7 @@ mod app {
         toggle_led::spawn(true).ok(); // Blink the led
     }
 
-    #[task(shared = [usb_device, usb_hid])]
+    #[task(priority = 2, capacity = 8, shared = [usb_device, usb_hid])]
     fn send_media_key_report(mut cx: send_media_key_report::Context, report: MediaKeyboardReport) {
         debug!("Sending usage id: {:#02x}.", report.usage_id as u16);
         cx.shared
@@ -178,7 +178,7 @@ mod app {
             .lock(|usb_hid| usb_hid.push_input(&report).ok());
     }
 
-    #[task(local = [led])]
+    #[task(priority = 1, local = [led])]
     fn toggle_led(cx: toggle_led::Context, blink: bool) {
         cx.local.led.toggle().ok();
         if blink {
