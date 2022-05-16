@@ -118,7 +118,7 @@ mod app {
         )
     }
 
-    #[task(binds = IO_IRQ_BANK0, local = [rotary_encoder, switch_pin])]
+    #[task(binds = IO_IRQ_BANK0, priority = 2, local = [rotary_encoder, switch_pin])]
     fn on_gpio(cx: on_gpio::Context) {
         let switch_pin = cx.local.switch_pin;
         let rotary_encoder = cx.local.rotary_encoder;
@@ -161,7 +161,7 @@ mod app {
             }
         }
     }
-    #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
+    #[task(binds = USBCTRL_IRQ, priority = 4, shared = [usb_device, usb_hid])]
     fn on_usb(cx: on_usb::Context) {
         debug!("Entered USB IRQ");
         (cx.shared.usb_device, cx.shared.usb_hid).lock(|usb_device, usb_hid| {
@@ -170,7 +170,7 @@ mod app {
         toggle_led::spawn(true).ok(); // Blink the led
     }
 
-    #[task(priority = 2, capacity = 8, shared = [usb_device, usb_hid])]
+    #[task(priority = 3, capacity = 8, shared = [usb_device, usb_hid])]
     fn send_media_key_report(mut cx: send_media_key_report::Context, report: MediaKeyboardReport) {
         debug!("Sending usage id: {:#02x}.", report.usage_id as u16);
         cx.shared
