@@ -4,7 +4,7 @@
 use defmt_rtt as _;
 use panic_probe as _;
 
-#[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [XIP_IRQ, PIO0_IRQ_0])]
+#[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [XIP_IRQ])]
 mod app {
 
     use core::mem::MaybeUninit;
