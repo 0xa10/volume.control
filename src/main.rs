@@ -8,7 +8,7 @@ use panic_probe as _;
 mod app {
 
     use core::mem::MaybeUninit;
-    use defmt::{debug, info, error, Debug2Format};
+    use defmt::{debug, error, info, Debug2Format};
     use embedded_hal::digital::v2::InputPin;
     use embedded_hal::digital::v2::OutputPin;
     use embedded_hal::digital::v2::ToggleableOutputPin;
@@ -125,7 +125,7 @@ mod app {
         if switch_pin.interrupt_status(hal::gpio::Interrupt::EdgeLow) {
             if let Ok(switch_pin_state) = switch_pin.is_low() {
                 if switch_pin_state {
-					send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xE2 }).ok();
+                    send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xE2 }).ok();
                 }
             }
             switch_pin.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
@@ -140,12 +140,20 @@ mod app {
 
             match rotary_encoder.direction() {
                 Direction::Clockwise => {
-					send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xE9 }).ok();
-					send_media_key_report::spawn_after(10.millis(), MediaKeyboardReport { usage_id: 0 }).ok();
+                    send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xE9 }).ok();
+                    send_media_key_report::spawn_after(
+                        10.millis(),
+                        MediaKeyboardReport { usage_id: 0 },
+                    )
+                    .ok();
                 }
                 Direction::Anticlockwise => {
-					send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xEA }).ok();
-					send_media_key_report::spawn_after(10.millis(), MediaKeyboardReport { usage_id: 0 }).ok();
+                    send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xEA }).ok();
+                    send_media_key_report::spawn_after(
+                        10.millis(),
+                        MediaKeyboardReport { usage_id: 0 },
+                    )
+                    .ok();
                 }
                 Direction::None => {}
             }
@@ -162,13 +170,15 @@ mod app {
     #[task(priority = 1, capacity = 4, shared = [usb_device, usb_hid])]
     fn send_media_key_report(mut cx: send_media_key_report::Context, report: MediaKeyboardReport) {
         debug!("Sending usage id: {:#02x}.", report.usage_id as u16);
-        if let Err(_err) = cx.shared
+        if let Err(_err) = cx
+            .shared
             .usb_hid
-            .lock(|usb_hid| { usb_hid.push_input(&report) } ) {
-			error!("Error sending USB packet. {:?}", Debug2Format(&_err));
-		}
+            .lock(|usb_hid| usb_hid.push_input(&report))
+        {
+            error!("Error sending USB packet. {:?}", Debug2Format(&_err));
+        }
 
-		#[cfg(debug_assertions)]
+        #[cfg(debug_assertions)]
         toggle_led::spawn(true).ok(); // Blink the led
     }
 
