@@ -8,7 +8,7 @@ use panic_probe as _;
 mod app {
 
     use core::mem::MaybeUninit;
-    use defmt::{debug, info, warn};
+    use defmt::{debug, info, warn, error, Debug2Format};
     use embedded_hal::digital::v2::InputPin;
     use embedded_hal::digital::v2::OutputPin;
     use embedded_hal::digital::v2::ToggleableOutputPin;
@@ -144,24 +144,18 @@ mod app {
 
             match rotary_encoder.direction() {
                 Direction::Clockwise => {
-                    if let Err(_) =
-                        send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xE9 })
-                    {
-                        warn!("Failed to dispatch media key for switch");
-                    }
+					send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xE9 });
+					send_media_key_report::spawn_after(10.millis(), MediaKeyboardReport { usage_id: 0 });
                 }
                 Direction::Anticlockwise => {
-                    if let Err(_) =
-                        send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xEA })
-                    {
-                        warn!("Failed to dispatch media key for switch");
-                    }
+					send_media_key_report::spawn(MediaKeyboardReport { usage_id: 0xEA });
+					send_media_key_report::spawn_after(10.millis(), MediaKeyboardReport { usage_id: 0 });
                 }
                 Direction::None => {}
             }
         }
     }
-    #[task(binds = USBCTRL_IRQ, priority = 4, shared = [usb_device, usb_hid])]
+    #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
     fn on_usb(cx: on_usb::Context) {
         debug!("Entered USB IRQ");
         (cx.shared.usb_device, cx.shared.usb_hid).lock(|usb_device, usb_hid| {
@@ -170,12 +164,14 @@ mod app {
         toggle_led::spawn(true).ok(); // Blink the led
     }
 
-    #[task(priority = 3, capacity = 8, shared = [usb_device, usb_hid])]
+    #[task(priority = 1, capacity = 4, shared = [usb_device, usb_hid])]
     fn send_media_key_report(mut cx: send_media_key_report::Context, report: MediaKeyboardReport) {
         debug!("Sending usage id: {:#02x}.", report.usage_id as u16);
-        cx.shared
+        if let Err(_err) = cx.shared
             .usb_hid
-            .lock(|usb_hid| usb_hid.push_input(&report).ok());
+            .lock(|usb_hid| { usb_hid.push_input(&report) } ) {
+			error!("Error sending USB packet. {:?}", Debug2Format(&_err));
+		}
     }
 
     #[task(priority = 1, local = [led])]
