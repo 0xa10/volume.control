@@ -31,8 +31,8 @@ mod app {
     type Monotonic = Rp2040Monotonic;
     type LedPin = hal::gpio::Pin<hal::gpio::pin::bank0::Gpio25, hal::gpio::PushPullOutput>;
     type SwitchPin = hal::gpio::Pin<hal::gpio::bank0::Gpio2, hal::gpio::PullUpInput>;
-    type DTPin = hal::gpio::Pin<hal::gpio::bank0::Gpio5, hal::gpio::PullUpInput>;
-    type CLKPin = hal::gpio::Pin<hal::gpio::bank0::Gpio6, hal::gpio::PullUpInput>;
+    type CLKPin = hal::gpio::Pin<hal::gpio::bank0::Gpio5, hal::gpio::PullUpInput>;
+    type DTPin = hal::gpio::Pin<hal::gpio::bank0::Gpio6, hal::gpio::PullUpInput>;
 
 	const HID_POLLING_INTERVAL_MS: u8 = 8;
 
@@ -83,11 +83,11 @@ mod app {
         led.set_low().unwrap();
 
         // Set up the pins and make sure they interrupt on both edges.
-        let rotary_dt: DTPin = pins.gpio5.into_mode();
+        let rotary_dt: DTPin = pins.gpio6.into_mode();
         rotary_dt.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
         rotary_dt.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
 
-        let rotary_clk: CLKPin = pins.gpio6.into_mode();
+        let rotary_clk: CLKPin = pins.gpio5.into_mode();
         rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
         rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
         let rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
