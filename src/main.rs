@@ -42,13 +42,13 @@ mod app {
         usb_device: UsbDevice<'static, UsbBus>,
         hid_consumer: Consumer<'static, MediaKeyboardReport, 4>,
         hid_producer: Producer<'static, MediaKeyboardReport, 4>,
+        switch_pin: SwitchPin,
+        rotary_encoder: Rotary<DTPin, CLKPin>,
     }
 
     #[local]
     struct Local {
         led: LedPin,
-        switch_pin: SwitchPin,
-        rotary_encoder: Rotary<DTPin, CLKPin>,
     }
 
     #[init(local = [
@@ -115,61 +115,42 @@ mod app {
             .build();
 
         let (hid_producer, hid_consumer) = cx.local.hid_queue.split();
-        usb_hid_feeder::spawn().ok();
+        usb_hid_task::spawn().ok();
         (
             Shared {
                 usb_hid,
                 usb_device,
                 hid_consumer,
                 hid_producer,
-            },
-            Local {
-                led,
                 switch_pin,
                 rotary_encoder,
             },
+            Local { led },
             init::Monotonics(Rp2040Monotonic::new(cx.device.TIMER)),
         )
     }
 
-    #[task(binds = IO_IRQ_BANK0, priority = 2, local = [rotary_encoder, switch_pin], shared = [hid_producer])]
+    #[task(binds = IO_IRQ_BANK0, priority = 2, shared = [rotary_encoder, switch_pin])]
     fn on_gpio(cx: on_gpio::Context) {
-        let switch_pin = cx.local.switch_pin;
-        let rotary_encoder = cx.local.rotary_encoder;
-        let mut hid_producer = cx.shared.hid_producer;
-
-        if switch_pin.interrupt_status(hal::gpio::Interrupt::EdgeLow) {
-            if let Ok(switch_pin_state) = switch_pin.is_low() {
-                if switch_pin_state {
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE2 }).ok());
-                }
-            }
+        // We skip checking the interrupt origin and simply clear all our GPIO interrupts,
+        // and trigger both rotation and click events.
+        // Checking the origin is more logically sound, but it does not save a considerable amount of
+        // cycles while complicating the code.
+        (cx.shared.switch_pin, cx.shared.rotary_encoder).lock(|switch_pin, rotary_encoder| {
+            // Clear switch event and dispatch handler
             switch_pin.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
-        } else {
-            if let Ok(direction) = rotary_encoder.update() {
-                match direction {
-                    Direction::Clockwise => {
-                        hid_producer
-                            .lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE9 }).ok());
-                        hid_producer
-                            .lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
-                    }
-                    Direction::CounterClockwise => {
-                        hid_producer
-                            .lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xEA }).ok());
-                        hid_producer
-                            .lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
-                    }
-                    Direction::None => {}
-                }
-            }
+            process_switch_event::spawn_after(800.micros()).ok(); // Small debounce delay
+
+            // Clear rotary event and dispatch handler
             let pins = rotary_encoder.pins();
             pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
             pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
 
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
-        }
+
+            process_rotation_event::spawn().ok();
+        });
     }
     #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
     fn on_usb(cx: on_usb::Context) {
@@ -179,8 +160,38 @@ mod app {
         });
     }
 
+    #[task(shared = [switch_pin, hid_producer])]
+    fn process_switch_event(cx: process_switch_event::Context) {
+        let mut switch_pin = cx.shared.switch_pin;
+        let mut hid_producer = cx.shared.hid_producer;
+        if let Ok(switch_pin_state) = switch_pin.lock(|sp| sp.is_low()) {
+            if switch_pin_state {
+                hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE2 }).ok());
+            }
+        }
+    }
+
+    #[task(shared = [rotary_encoder, hid_producer])]
+    fn process_rotation_event(cx: process_rotation_event::Context) {
+        let mut rotary_encoder = cx.shared.rotary_encoder;
+        let mut hid_producer = cx.shared.hid_producer;
+        if let Ok(direction) = rotary_encoder.lock(|re| re.update()) {
+            match direction {
+                Direction::Clockwise => {
+                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE9 }).ok());
+                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
+                }
+                Direction::CounterClockwise => {
+                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xEA }).ok());
+                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
+                }
+                Direction::None => {}
+            }
+        }
+    }
+
     #[task(shared = [usb_device, usb_hid, hid_consumer])]
-    fn usb_hid_feeder(mut cx: usb_hid_feeder::Context) {
+    fn usb_hid_task(mut cx: usb_hid_task::Context) {
         let mut hid_consumer = cx.shared.hid_consumer;
 
         // Do a single event every poll interval.
@@ -204,8 +215,7 @@ mod app {
                 }
             }
         }
-
-        usb_hid_feeder::spawn_after(8.millis()).ok(); // TODO - figure out millis type
+        usb_hid_task::spawn_after(8.millis()).ok(); // TODO - figure out millis type
     }
 
     #[task(priority = 1, local = [led])]
