@@ -25,7 +25,7 @@ mod app {
 
     use rotary_encoder_hal::{Direction, Rotary};
 
-	use heapless::spsc::{Consumer, Producer, Queue};
+    use heapless::spsc::{Consumer, Producer, Queue};
 
     #[monotonic(binds = TIMER_IRQ_0, default = true)]
     type Monotonic = Rp2040Monotonic;
@@ -34,14 +34,14 @@ mod app {
     type CLKPin = hal::gpio::Pin<hal::gpio::bank0::Gpio5, hal::gpio::PullUpInput>;
     type DTPin = hal::gpio::Pin<hal::gpio::bank0::Gpio6, hal::gpio::PullUpInput>;
 
-	const HID_POLLING_INTERVAL_MS: u8 = 8;
+    const HID_POLLING_INTERVAL_MS: u8 = 8;
 
     #[shared]
     struct Shared {
         usb_hid: HIDClass<'static, UsbBus>,
         usb_device: UsbDevice<'static, UsbBus>,
-		hid_consumer: Consumer<'static, MediaKeyboardReport, 4>,
-		hid_producer: Producer<'static, MediaKeyboardReport, 4>,
+        hid_consumer: Consumer<'static, MediaKeyboardReport, 4>,
+        hid_producer: Producer<'static, MediaKeyboardReport, 4>,
     }
 
     #[local]
@@ -100,7 +100,11 @@ mod app {
             true,
             &mut resets,
         )));
-        let usb_hid = HIDClass::new(usb_bus, MediaKeyboardReport::desc(), HID_POLLING_INTERVAL_MS);
+        let usb_hid = HIDClass::new(
+            usb_bus,
+            MediaKeyboardReport::desc(),
+            HID_POLLING_INTERVAL_MS,
+        );
 
         let usb_device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x1209, 0x4853))
             .manufacturer("pini.grigio")
@@ -110,14 +114,14 @@ mod app {
             .max_power(500)
             .build();
 
-		let (hid_producer, hid_consumer) = cx.local.hid_queue.split();
-		usb_hid_feeder::spawn().ok();
+        let (hid_producer, hid_consumer) = cx.local.hid_queue.split();
+        usb_hid_feeder::spawn().ok();
         (
             Shared {
                 usb_hid,
                 usb_device,
-				hid_consumer,
-				hid_producer,
+                hid_consumer,
+                hid_producer,
             },
             Local {
                 led,
@@ -143,25 +147,28 @@ mod app {
             switch_pin.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
         } else {
             if let Ok(direction) = rotary_encoder.update() {
-				match direction {
-					Direction::Clockwise => {
-						hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE9 }).ok());
-						hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
-					}
-					Direction::CounterClockwise => {
-						hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xEA }).ok());
-						hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
-					}
-					Direction::None => {}
-				}
-			}
+                match direction {
+                    Direction::Clockwise => {
+                        hid_producer
+                            .lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE9 }).ok());
+                        hid_producer
+                            .lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
+                    }
+                    Direction::CounterClockwise => {
+                        hid_producer
+                            .lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xEA }).ok());
+                        hid_producer
+                            .lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
+                    }
+                    Direction::None => {}
+                }
+            }
             let pins = rotary_encoder.pins();
             pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
             pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
 
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
-
         }
     }
     #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
@@ -176,25 +183,29 @@ mod app {
     fn usb_hid_feeder(mut cx: usb_hid_feeder::Context) {
         let mut hid_consumer = cx.shared.hid_consumer;
 
-		// Do a single event every poll interval.
-		if let Some(report) = hid_consumer.lock(|h| h.dequeue()) {
-			// Event was queued by encoder task, send to USB.
-			debug!("Dequeued event, sending usage id: {:#02x}.", report.usage_id as u16);
-			if let Err(_err) = cx
-				.shared
-				.usb_hid
-				.lock(|usb_hid| usb_hid.push_input(&report))
-			{
-				error!("Error sending USB packet. {:?}", Debug2Format(&_err));
-			} else {
-				#[cfg(debug_assertions)] {
-					debug!("Sent USB packet succesfully.");
-					toggle_led::spawn(true).ok(); // Blink the led
-				}
-			}
-		}
+        // Do a single event every poll interval.
+        if let Some(report) = hid_consumer.lock(|h| h.dequeue()) {
+            // Event was queued by encoder task, send to USB.
+            debug!(
+                "Dequeued event, sending usage id: {:#02x}.",
+                report.usage_id as u16
+            );
+            if let Err(_err) = cx
+                .shared
+                .usb_hid
+                .lock(|usb_hid| usb_hid.push_input(&report))
+            {
+                error!("Error sending USB packet. {:?}", Debug2Format(&_err));
+            } else {
+                #[cfg(debug_assertions)]
+                {
+                    debug!("Sent USB packet succesfully.");
+                    toggle_led::spawn(true).ok(); // Blink the led
+                }
+            }
+        }
 
-		usb_hid_feeder::spawn_after(8.millis()).ok(); // TODO - figure out millis type
+        usb_hid_feeder::spawn_after(8.millis()).ok(); // TODO - figure out millis type
     }
 
     #[task(priority = 1, local = [led])]
