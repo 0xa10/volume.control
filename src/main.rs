@@ -16,16 +16,22 @@ mod app {
     use rp_pico::hal;
     use rp_pico::XOSC_CRYSTAL_FREQ;
 
+	use hal::Clock;
     use hal::usb::UsbBus;
     use usb_device::{class_prelude::*, prelude::*};
 
-    use usbd_hid::descriptor::generator_prelude::*;
-    use usbd_hid::descriptor::MediaKeyboardReport;
-    use usbd_hid::hid_class::HIDClass;
+	use usbd_human_interface_device::device::consumer::{ConsumerControlInterface, MultipleConsumerReport};
+	use usbd_human_interface_device::device::keyboard::NKROBootKeyboardInterface;
+
+	use usbd_human_interface_device::prelude::*;
+
+	use frunk::HList;
+
+	use usbd_human_interface_device::page::Consumer as ConsumerPage;
 
     use rotary_encoder_hal::{Direction, Rotary};
 
-    use heapless::spsc::{Consumer, Producer, Queue};
+    use heapless::spsc::{Consumer as QueueConsumer, Producer, Queue};
 
     #[monotonic(binds = TIMER_IRQ_0, default = true)]
     type Monotonic = Rp2040Monotonic;
@@ -34,14 +40,15 @@ mod app {
     type DTPin = hal::gpio::Pin<hal::gpio::bank0::Gpio5, hal::gpio::PullUpInput>;
     type CLKPin = hal::gpio::Pin<hal::gpio::bank0::Gpio6, hal::gpio::PullUpInput>;
 
-    const HID_POLLING_INTERVAL_MS: u8 = 8;
-
     #[shared]
     struct Shared {
-        usb_hid: HIDClass<'static, UsbBus>,
+        usb_hid: UsbHidClass<UsbBus, HList!(
+			ConsumerControlInterface<'static, hal::usb::UsbBus>,
+			NKROBootKeyboardInterface<'static, hal::usb::UsbBus, SyncTimerClock>,
+		)>,
         usb_device: UsbDevice<'static, UsbBus>,
-        hid_consumer: Consumer<'static, MediaKeyboardReport, 4>,
-        hid_producer: Producer<'static, MediaKeyboardReport, 4>,
+        hid_consumer: QueueConsumer<'static, MultipleConsumerReport, 4>,
+        hid_producer: Producer<'static, MultipleConsumerReport, 4>,
         switch_pin: SwitchPin,
         rotary_encoder: Rotary<DTPin, CLKPin>,
     }
@@ -53,7 +60,7 @@ mod app {
 
     #[init(local = [
 			usb_bus: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit(),
-			hid_queue: Queue<MediaKeyboardReport, 4> = Queue::new(),
+			hid_queue: Queue<MultipleConsumerReport, 4> = Queue::new(),
 		])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         info!("Starting init");
@@ -105,11 +112,17 @@ mod app {
             true,
             &mut resets,
         )));
-        let usb_hid = HIDClass::new(
-            usb_bus,
-            MediaKeyboardReport::desc(),
-            HID_POLLING_INTERVAL_MS,
-        );
+
+		let clock = SyncTimerClock::new(hal::Timer::new(
+            cx.device.TIMER,
+            &mut resets));
+        let usb_hid = UsbHidClassBuilder::new()
+				.add_interface(
+					NKROBootKeyboardInterface::default_config(clock),
+				)
+				.add_interface(
+					ConsumerControlInterface::default_config(),
+				).build(&usb_bus);
 
         let usb_device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x1209, 0x4853))
             .manufacturer("pini.grigio")
@@ -191,7 +204,9 @@ mod app {
         let mut hid_producer = cx.shared.hid_producer;
         if let Ok(switch_pin_state) = switch_pin.lock(|sp| sp.is_low()) {
             if switch_pin_state {
-                hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE2 }).ok());
+				hid_producer.lock(|p| p.enqueue(MultipleConsumerReport {
+					codes: [ConsumerPage::Mute, ConsumerPage::Unassigned, ConsumerPage::Unassigned, ConsumerPage::Unassigned]
+				}).ok());
             }
         }
     }
@@ -203,12 +218,20 @@ mod app {
         if let Ok(direction) = rotary_encoder.lock(|re| re.update()) {
             match direction {
                 Direction::Clockwise => {
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE9 }).ok());
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
+                    hid_producer.lock(|p| p.enqueue(MultipleConsumerReport {
+						codes: [ConsumerPage::VolumeIncrement, ConsumerPage::Unassigned, ConsumerPage::Unassigned, ConsumerPage::Unassigned]
+					}).ok());
+                    hid_producer.lock(|p| p.enqueue(MultipleConsumerReport {
+						codes: [ConsumerPage::Unassigned, ConsumerPage::Unassigned, ConsumerPage::Unassigned, ConsumerPage::Unassigned]
+					}).ok());
                 }
                 Direction::CounterClockwise => {
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xEA }).ok());
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
+                    hid_producer.lock(|p| p.enqueue(MultipleConsumerReport {
+						codes: [ConsumerPage::VolumeDecrement, ConsumerPage::Unassigned, ConsumerPage::Unassigned, ConsumerPage::Unassigned]
+					}).ok());
+                    hid_producer.lock(|p| p.enqueue(MultipleConsumerReport {
+						codes: [ConsumerPage::Unassigned, ConsumerPage::Unassigned, ConsumerPage::Unassigned, ConsumerPage::Unassigned]
+					}).ok());
                 }
                 Direction::None => {}
             }
@@ -223,13 +246,12 @@ mod app {
         if let Some(report) = hid_consumer.lock(|h| h.dequeue()) {
             // Event was queued by encoder task, send to USB.
             debug!(
-                "Dequeued event, sending usage id: {:#02x}.",
-                report.usage_id as u16
+                "Dequeued event.",
             );
             if let Err(_err) = cx
                 .shared
                 .usb_hid
-                .lock(|usb_hid| usb_hid.push_input(&report))
+                .lock(|usb_hid| usb_hid.interface().write_report(&report))
             {
                 error!("Error sending USB packet. {:?}", Debug2Format(&_err));
             } else {
