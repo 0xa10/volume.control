@@ -23,7 +23,7 @@ mod app {
     use usbd_hid::descriptor::MediaKeyboardReport;
     use usbd_hid::hid_class::HIDClass;
 
-    use rotary_encoder_embedded::{Direction, RotaryEncoder};
+    use rotary_encoder_hal::{Direction, Rotary};
 
 	use heapless::spsc::{Consumer, Producer, Queue};
 
@@ -48,7 +48,7 @@ mod app {
     struct Local {
         led: LedPin,
         switch_pin: SwitchPin,
-        rotary_encoder: RotaryEncoder<DTPin, CLKPin>,
+        rotary_encoder: Rotary<DTPin, CLKPin>,
     }
 
     #[init(local = [
@@ -90,7 +90,7 @@ mod app {
         let rotary_clk: CLKPin = pins.gpio5.into_mode();
         rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
         rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
-        let rotary_encoder = RotaryEncoder::new(rotary_dt, rotary_clk);
+        let rotary_encoder = Rotary::new(rotary_dt, rotary_clk);
         let switch_pin = pins.gpio2.into_mode();
         switch_pin.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
         let usb_bus: &'static _ = cx.local.usb_bus.write(UsbBusAllocator::new(UsbBus::new(
@@ -142,25 +142,26 @@ mod app {
             }
             switch_pin.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
         } else {
-            rotary_encoder.update();
-            let pins = rotary_encoder.borrow_pins();
+            if let Ok(direction) = rotary_encoder.update() {
+				match direction {
+					Direction::Clockwise => {
+						hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE9 }).ok());
+						hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
+					}
+					Direction::CounterClockwise => {
+						hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xEA }).ok());
+						hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
+					}
+					Direction::None => {}
+				}
+			}
+            let pins = rotary_encoder.pins();
             pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
             pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
 
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
 
-            match rotary_encoder.direction() {
-                Direction::Clockwise => {
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xE9 }).ok());
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
-                }
-                Direction::Anticlockwise => {
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0xEA }).ok());
-                    hid_producer.lock(|p| p.enqueue(MediaKeyboardReport { usage_id: 0x0 }).ok());
-                }
-                Direction::None => {}
-            }
         }
     }
     #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
