@@ -14,21 +14,22 @@ mod app {
     use embedded_hal::digital::v2::OutputPin;
     use embedded_hal::digital::v2::ToggleableOutputPin;
 
+    use rp2040_hal as hal;
     use rp2040_monotonic::*;
-    use rp_pico::hal;
-    use rp_pico::XOSC_CRYSTAL_FREQ;
 
     use hal::usb::UsbBus;
     use usb_device::{class_prelude::*, prelude::*};
-    
+
+    use crate::hid::{VolumeControlInterface, VolumeControlReport};
     use usbd_human_interface_device::hid_class::prelude::*;
-    use crate::hid::{VolumeControlInterface, VolumeControl};
-    
-	use frunk::HList;
+
+    use frunk::HList;
 
     use rotary_encoder_hal::{Direction, Rotary};
 
-    use heapless::spsc::{Consumer as Consumer, Producer, Queue};
+    use heapless::spsc::{Consumer, Producer, Queue};
+
+    const XOSC_CRYSTAL_FREQ: u32 = 12_000_000;
 
     #[monotonic(binds = TIMER_IRQ_0, default = true)]
     type Monotonic = Rp2040Monotonic;
@@ -41,8 +42,8 @@ mod app {
     struct Shared {
         usb_hid: UsbHidClass<UsbBus, HList!(VolumeControlInterface<'static, UsbBus>,)>,
         usb_device: UsbDevice<'static, UsbBus>,
-        hid_consumer: Consumer<'static, VolumeControl, 4>,
-        hid_producer: Producer<'static, VolumeControl, 4>,
+        hid_consumer: Consumer<'static, VolumeControlReport, 4>,
+        hid_producer: Producer<'static, VolumeControlReport, 4>,
         switch_pin: SwitchPin,
         rotary_encoder: Rotary<DTPin, CLKPin>,
     }
@@ -54,10 +55,11 @@ mod app {
 
     #[init(local = [
 			usb_bus: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit(),
-			hid_queue: Queue<VolumeControl, 4> = Queue::new(),
+			hid_queue: Queue<VolumeControlReport, 4> = Queue::new(),
 		])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         info!("Starting init");
+        // General MCU initialization
         let mut resets = cx.device.RESETS;
         let mut watchdog = hal::watchdog::Watchdog::new(cx.device.WATCHDOG);
 
@@ -80,10 +82,12 @@ mod app {
             sio.gpio_bank0,
             &mut resets,
         );
+
+        // LED setup - only relevant for Pico
         let mut led = pins.led.into_push_pull_output();
         led.set_low().unwrap();
 
-        // Set up the pins and make sure they interrupt on both edges.
+        // Rotary encoder GPIO setup
         let rotary_dt: DTPin = pins.gpio5.into_mode();
         rotary_dt.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
         rotary_dt.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
@@ -93,7 +97,9 @@ mod app {
         rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
         let rotary_encoder = Rotary::new(rotary_dt, rotary_clk);
 
+        // Switch GPIO setup
         let switch_pin = pins.gpio2.into_mode();
+        // Check if button is pressed during setup - boot to BOOTSEL mode if so
         if let Ok(switch_pin_low_on_init) = switch_pin.is_low() {
             if switch_pin_low_on_init {
                 reset_to_bootsel();
@@ -101,6 +107,7 @@ mod app {
         }
         switch_pin.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
 
+        // USB bus and device setup
         let usb_bus: &'static _ = cx.local.usb_bus.write(UsbBusAllocator::new(UsbBus::new(
             cx.device.USBCTRL_REGS,
             cx.device.USBCTRL_DPRAM,
@@ -120,8 +127,11 @@ mod app {
             .max_power(500)
             .build();
 
+        // HID queue setup
         let (hid_producer, hid_consumer) = cx.local.hid_queue.split();
         usb_hid_task::spawn().ok();
+
+        // Init done
         (
             Shared {
                 usb_hid,
@@ -137,7 +147,8 @@ mod app {
     }
 
     fn reset_to_bootsel() -> ! {
-        // For usb_boot to work, XOSC needs to be running
+        // Taken from jannic/rp2040-panic-usb-boot - not quite sure what
+        // here is strictly necessary and what can be removed.
         cortex_m::interrupt::disable();
         let p = unsafe { rp2040_hal::pac::Peripherals::steal() };
         if !(p.XOSC.status.read().stable().bit()) {
@@ -159,14 +170,13 @@ mod app {
 
     #[task(binds = IO_IRQ_BANK0, priority = 2, shared = [rotary_encoder, switch_pin])]
     fn on_gpio(cx: on_gpio::Context) {
-        // We skip checking the interrupt origin and simply clear all our GPIO interrupts,
-        // and trigger a HID report whenever the pin state changes.
-        // Checking the origin is more logically sound, but it does not save a considerable amount of
-        // cycles while complicating the code.
+        // Instead of sending a new HID report every polling interval, which is
+        // apparently the common M.O - we'd like to trigger a HID event every time
+        // the rotary encoder changes position or the switch is pressed.
         (cx.shared.switch_pin, cx.shared.rotary_encoder).lock(|switch_pin, rotary_encoder| {
             // Clear switch event and dispatch handler
             switch_pin.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
-            process_switch_event::spawn_after(2.millis()).ok(); 
+            process_switch_event::spawn_after(2.millis()).ok();
 
             // Clear rotary event and dispatch handler
             let pins = rotary_encoder.pins();
@@ -176,9 +186,10 @@ mod app {
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
 
-            process_rotation_event::spawn_after(1.micros()).ok(); 
+            process_rotation_event::spawn_after(1.micros()).ok();
         });
     }
+
     #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
     fn on_usb(cx: on_usb::Context) {
         debug!("Entered USB IRQ");
@@ -189,42 +200,53 @@ mod app {
 
     #[task(shared = [switch_pin, hid_producer])]
     fn process_switch_event(cx: process_switch_event::Context) {
-        (cx.shared.switch_pin, cx.shared.hid_producer).lock(
-            |switch_pin, hid_producer| {
-                // Assemble volume control report
-                let switch_pin_state = switch_pin.is_low().unwrap_or(false);
-                
-                // Note - since we dont seem to catch the release event each time (even with triggers on both edges)
-                // we do send a clear (all false) report after each event being sent.
-                if switch_pin_state {
-                    hid_producer.enqueue(VolumeControl {
+        (cx.shared.switch_pin, cx.shared.hid_producer).lock(|switch_pin, hid_producer| {
+            // Assemble volume control report
+            let switch_pin_state = switch_pin.is_low().unwrap_or(false);
+
+            // Note - since we dont seem to catch the release event each time (even with triggers on both edges)
+            // we do send a clear (all false) report after each event being sent.
+            if switch_pin_state {
+                hid_producer
+                    .enqueue(VolumeControlReport {
                         mute: true,
                         volume_increment: false,
                         volume_decrement: false,
-                    }).ok();
+                    })
+                    .ok();
 
-                    hid_producer.enqueue(VolumeControl {mute: false, volume_increment: false, volume_decrement: false }).ok();
-                }
+                hid_producer
+                    .enqueue(VolumeControlReport {
+                        mute: false,
+                        volume_increment: false,
+                        volume_decrement: false,
+                    })
+                    .ok();
             }
-        );
+        });
     }
 
     #[task(shared = [rotary_encoder, hid_producer])]
     fn process_rotation_event(cx: process_rotation_event::Context) {
-        (cx.shared.rotary_encoder, cx.shared.hid_producer).lock(
-            |rotary_encoder, hid_producer| {
-                // Assemble volume control report
-                let direction = rotary_encoder.update().unwrap_or(Direction::None);
-                
-                hid_producer.enqueue(VolumeControl {
+        (cx.shared.rotary_encoder, cx.shared.hid_producer).lock(|rotary_encoder, hid_producer| {
+            // Assemble volume control report
+            let direction = rotary_encoder.update().unwrap_or(Direction::None);
+
+            hid_producer
+                .enqueue(VolumeControlReport {
                     mute: false,
                     volume_increment: direction == Direction::Clockwise,
                     volume_decrement: direction == Direction::CounterClockwise,
-                }).ok();
-                hid_producer.enqueue(VolumeControl {mute: false, volume_increment: false, volume_decrement: false }).ok();
-
-            }
-        );
+                })
+                .ok();
+            hid_producer
+                .enqueue(VolumeControlReport {
+                    mute: false,
+                    volume_increment: false,
+                    volume_decrement: false,
+                })
+                .ok();
+        });
     }
 
     #[task(shared = [usb_device, usb_hid, hid_consumer])]
@@ -236,9 +258,7 @@ mod app {
 
         if let Some(report) = hid_consumer.lock(|h| h.dequeue()) {
             // Event was queued by encoder task, send to USB.
-            debug!(
-                "Dequeued event.",
-            );
+            debug!("Dequeued event.",);
             if let Err(_err) = cx
                 .shared
                 .usb_hid

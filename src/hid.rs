@@ -1,6 +1,7 @@
 use delegate::delegate;
 use embedded_time::duration::Milliseconds;
 use packed_struct::prelude::*;
+
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus};
 use usb_device::class_prelude::DescriptorWriter;
 
@@ -31,9 +32,9 @@ pub const VOLUME_CONTROL_DESCRIPTOR: &[u8] = &[
     0xC0, //        End Collection
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Default, PackedStruct)]
+#[derive(Clone, Copy, Debug, PartialEq, PackedStruct)]
 #[packed_struct(endian = "lsb", bit_numbering = "lsb0", size_bytes = "1")]
-pub struct VolumeControl {
+pub struct VolumeControlReport {
     #[packed_field(bits = "0")]
     pub mute: bool,
     #[packed_field(bits = "1")]
@@ -47,7 +48,7 @@ pub struct VolumeControlInterface<'a, B: UsbBus> {
 }
 
 impl<'a, B: UsbBus> VolumeControlInterface<'a, B> {
-    pub fn write_report(&self, report: &VolumeControl) -> Result<(), UsbHidError> {
+    pub fn write_report(&self, report: &VolumeControlReport) -> Result<(), UsbHidError> {
         // Explicitly map error to SerializationError
         let data = report.pack().map_err(|_| UsbHidError::SerializationError)?;
 
@@ -90,9 +91,7 @@ impl<'a, B: UsbBus> InterfaceClass<'a> for VolumeControlInterface<'a, B> {
     }
 }
 
-impl<'a, B: UsbBus> WrappedInterface<'a, B, RawInterface<'a, B>>
-    for VolumeControlInterface<'a, B>
-{
+impl<'a, B: UsbBus> WrappedInterface<'a, B, RawInterface<'a, B>> for VolumeControlInterface<'a, B> {
     fn new(interface: RawInterface<'a, B>, _: ()) -> Self {
         Self { inner: interface }
     }
