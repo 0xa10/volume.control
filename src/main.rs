@@ -9,7 +9,7 @@ mod hid;
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [XIP_IRQ])]
 mod app {
     use core::mem::MaybeUninit;
-    use defmt::{debug, error, info, Debug2Format};
+    use defmt::{debug, info};
     use embedded_hal::digital::v2::InputPin;
     use embedded_hal::digital::v2::OutputPin;
     use embedded_hal::digital::v2::ToggleableOutputPin;
@@ -27,8 +27,6 @@ mod app {
 
     use rotary_encoder_hal::{Direction, Rotary};
 
-    use heapless::spsc::{Consumer, Producer, Queue};
-
     const XOSC_CRYSTAL_FREQ: u32 = 12_000_000;
 
     #[monotonic(binds = TIMER_IRQ_0, default = true)]
@@ -42,8 +40,6 @@ mod app {
     struct Shared {
         usb_hid: UsbHidClass<UsbBus, HList!(VolumeControlInterface<'static, UsbBus>,)>,
         usb_device: UsbDevice<'static, UsbBus>,
-        hid_consumer: Consumer<'static, VolumeControlReport, 4>,
-        hid_producer: Producer<'static, VolumeControlReport, 4>,
         switch_pin: SwitchPin,
         rotary_encoder: Rotary<DTPin, CLKPin>,
     }
@@ -55,7 +51,6 @@ mod app {
 
     #[init(local = [
 			usb_bus: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit(),
-			hid_queue: Queue<VolumeControlReport, 4> = Queue::new(),
 		])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         info!("Starting init");
@@ -89,12 +84,8 @@ mod app {
 
         // Rotary encoder GPIO setup
         let rotary_dt: DTPin = pins.gpio5.into_mode();
-        rotary_dt.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
-        rotary_dt.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
 
         let rotary_clk: CLKPin = pins.gpio6.into_mode();
-        rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
-        rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
         let rotary_encoder = Rotary::new(rotary_dt, rotary_clk);
 
         // Switch GPIO setup
@@ -105,7 +96,6 @@ mod app {
                 reset_to_bootsel();
             }
         }
-        switch_pin.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
 
         // USB bus and device setup
         let usb_bus: &'static _ = cx.local.usb_bus.write(UsbBusAllocator::new(UsbBus::new(
@@ -127,8 +117,7 @@ mod app {
             .max_power(500)
             .build();
 
-        // HID queue setup
-        let (hid_producer, hid_consumer) = cx.local.hid_queue.split();
+        // HID task setup
         usb_hid_task::spawn().ok();
 
         // Init done
@@ -136,8 +125,6 @@ mod app {
             Shared {
                 usb_hid,
                 usb_device,
-                hid_consumer,
-                hid_producer,
                 switch_pin,
                 rotary_encoder,
             },
@@ -168,27 +155,6 @@ mod app {
         loop {}
     }
 
-    #[task(binds = IO_IRQ_BANK0, priority = 2, shared = [rotary_encoder, switch_pin])]
-    fn on_gpio(cx: on_gpio::Context) {
-        // Instead of sending a new HID report every polling interval, which is
-        // apparently the common M.O - we'd like to trigger a HID event every time
-        // the rotary encoder changes position or the switch is pressed.
-        (cx.shared.switch_pin, cx.shared.rotary_encoder).lock(|switch_pin, rotary_encoder| {
-            // Clear switch event and dispatch handler
-            switch_pin.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
-            process_switch_event::spawn_after(2.millis()).ok();
-
-            // Clear rotary event and dispatch handler
-            let pins = rotary_encoder.pins();
-            pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
-            pins.0.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
-
-            pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
-            pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
-
-            process_rotation_event::spawn_after(1.micros()).ok();
-        });
-    }
 
     #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
     fn on_usb(cx: on_usb::Context) {
@@ -198,81 +164,22 @@ mod app {
         });
     }
 
-    #[task(shared = [switch_pin, hid_producer])]
-    fn process_switch_event(cx: process_switch_event::Context) {
-        (cx.shared.switch_pin, cx.shared.hid_producer).lock(|switch_pin, hid_producer| {
-            // Assemble volume control report
-            let switch_pin_state = switch_pin.is_low().unwrap_or(false);
-
-            // Note - since we dont seem to catch the release event each time (even with triggers on both edges)
-            // we do send a clear (all false) report after each event being sent.
-            if switch_pin_state {
-                hid_producer
-                    .enqueue(VolumeControlReport {
-                        mute: true,
-                        volume_increment: false,
-                        volume_decrement: false,
-                    })
-                    .ok();
-
-                hid_producer
-                    .enqueue(VolumeControlReport {
-                        mute: false,
-                        volume_increment: false,
-                        volume_decrement: false,
-                    })
-                    .ok();
-            }
-        });
-    }
-
-    #[task(shared = [rotary_encoder, hid_producer])]
-    fn process_rotation_event(cx: process_rotation_event::Context) {
-        (cx.shared.rotary_encoder, cx.shared.hid_producer).lock(|rotary_encoder, hid_producer| {
-            // Assemble volume control report
-            let direction = rotary_encoder.update().unwrap_or(Direction::None);
-
-            hid_producer
-                .enqueue(VolumeControlReport {
-                    mute: false,
-                    volume_increment: direction == Direction::Clockwise,
-                    volume_decrement: direction == Direction::CounterClockwise,
-                })
-                .ok();
-            hid_producer
-                .enqueue(VolumeControlReport {
-                    mute: false,
-                    volume_increment: false,
-                    volume_decrement: false,
-                })
-                .ok();
-        });
-    }
-
-    #[task(shared = [usb_device, usb_hid, hid_consumer])]
+    #[task(shared = [usb_device, usb_hid, rotary_encoder, switch_pin])]
     fn usb_hid_task(mut cx: usb_hid_task::Context) {
-        // This task is responsible for emitting HID events in accordance
-        // with the USB polling interval.
-        // A limited backlog of events may be queued.
-        let mut hid_consumer = cx.shared.hid_consumer;
+        let report = (cx.shared.rotary_encoder, cx.shared.switch_pin).lock(
+            |rotary_encoder, switch_pin| {
+                // Assemble volume control report
+                let switch_pin_state = switch_pin.is_low().unwrap_or(false);
+                let direction = rotary_encoder.update().unwrap_or(Direction::None);
 
-        if let Some(report) = hid_consumer.lock(|h| h.dequeue()) {
-            // Event was queued by encoder task, send to USB.
-            debug!("Dequeued event.",);
-            if let Err(_err) = cx
-                .shared
-                .usb_hid
-                .lock(|usb_hid| usb_hid.interface().write_report(&report))
-            {
-                error!("Error sending USB packet. {:?}", Debug2Format(&_err));
-            } else {
-                #[cfg(debug_assertions)]
-                {
-                    debug!("Sent USB packet succesfully.");
-                    toggle_led::spawn(true).ok(); // Blink the led
+                VolumeControlReport {
+                        mute: switch_pin_state,
+                        volume_increment: direction == Direction::Clockwise,
+                        volume_decrement: direction == Direction::CounterClockwise,
                 }
-            }
-        }
+            });
+        
+        cx.shared.usb_hid.lock(|usb_hid| usb_hid.interface().write_report(&report)).ok();
         usb_hid_task::spawn_after(8.millis()).ok(); // TODO - figure out millis type
     }
 
