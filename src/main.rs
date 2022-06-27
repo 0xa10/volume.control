@@ -176,7 +176,6 @@ mod app {
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeHigh);
             pins.1.clear_interrupt(hal::gpio::Interrupt::EdgeLow);
 
-            // 2ms debouncing delay - meaning we check only after the switch has settled.
             process_rotation_event::spawn_after(1.micros()).ok(); 
         });
     }
@@ -195,6 +194,8 @@ mod app {
                 // Assemble volume control report
                 let switch_pin_state = switch_pin.is_low().unwrap_or(false);
                 
+                // Note - since we dont seem to catch the release event each time (even with triggers on both edges)
+                // we do send a clear (all false) report after each event being sent.
                 if switch_pin_state {
                     hid_producer.enqueue(VolumeControl {
                         mute: true,
