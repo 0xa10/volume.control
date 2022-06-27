@@ -109,7 +109,6 @@ mod app {
         let usb_device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x1209, 0x4853))
             .manufacturer("pini.grigio")
             .product("volume.control")
-            .device_class(0x3)
             .max_packet_size_0(64)
             .max_power(500)
             .build();
