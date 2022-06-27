@@ -92,6 +92,11 @@ mod app {
         rotary_clk.set_interrupt_enabled(hal::gpio::Interrupt::EdgeHigh, true);
         let rotary_encoder = Rotary::new(rotary_dt, rotary_clk);
         let switch_pin = pins.gpio2.into_mode();
+        if let Ok(switch_pin_low_on_init) = switch_pin.is_low() {
+            if switch_pin_low_on_init {
+                reset_to_bootsel();
+            }
+        }
         switch_pin.set_interrupt_enabled(hal::gpio::Interrupt::EdgeLow, true);
         let usb_bus: &'static _ = cx.local.usb_bus.write(UsbBusAllocator::new(UsbBus::new(
             cx.device.USBCTRL_REGS,
@@ -127,6 +132,27 @@ mod app {
             Local { led },
             init::Monotonics(Rp2040Monotonic::new(cx.device.TIMER)),
         )
+    }
+
+    fn reset_to_bootsel() -> ! {
+        // For usb_boot to work, XOSC needs to be running
+        cortex_m::interrupt::disable();
+        let p = unsafe { rp2040_hal::pac::Peripherals::steal() };
+        if !(p.XOSC.status.read().stable().bit()) {
+            p.XOSC.startup.write(|w| unsafe {
+                w.delay().bits((12_000 /*kHz*/ + 128) / 256)
+            });
+            p.XOSC.ctrl.write(|w| {
+                w.freq_range()
+                    .variant(rp2040_hal::pac::xosc::ctrl::FREQ_RANGE_A::_1_15MHZ)
+                    .enable()
+                    .variant(rp2040_hal::pac::xosc::ctrl::ENABLE_A::ENABLE)
+            });
+            while !(p.XOSC.status.read().stable().bit()) {}
+        }
+
+        rp2040_hal::rom_data::reset_to_usb_boot(0, 0);
+        loop {}
     }
 
     #[task(binds = IO_IRQ_BANK0, priority = 2, shared = [rotary_encoder, switch_pin])]
