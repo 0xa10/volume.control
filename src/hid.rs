@@ -13,8 +13,10 @@ use usbd_human_interface_device::interface::{
 };
 use usbd_human_interface_device::UsbHidError;
 
+pub const HID_REPORTING_INTERVAL: u32 = 8;
+
 #[rustfmt::skip]
-pub const VOLUME_CONTROL_DESCRIPTOR: &[u8] = &[
+const VOLUME_CONTROL_DESCRIPTOR: &[u8] = &[
     0x05, 0x0C, //        Usage Page (Consumer Devices)  
     0x09, 0x01, //        Usage (Consumer Control)  
     0xA1, 0x01, //        Collection (Application)  
@@ -64,7 +66,7 @@ impl<'a, B: UsbBus> VolumeControlInterface<'a, B> {
                 .description("volume.control")
                 .idle_default(Milliseconds(0))
                 .unwrap()
-                .in_endpoint(UsbPacketSize::Bytes8, Milliseconds(10))
+                .in_endpoint(UsbPacketSize::Bytes8, Milliseconds(HID_REPORTING_INTERVAL))
                 .unwrap()
                 .build(),
             (),
