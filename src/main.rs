@@ -1,8 +1,12 @@
 #![no_std]
 #![no_main]
 
+#[cfg(debug_assertions)]
 use defmt_rtt as _;
+#[cfg(debug_assertions)]
 use panic_probe as _;
+#[cfg(not(debug_assertions))]
+use panic_halt as _;
 
 mod hid;
 
@@ -135,24 +139,12 @@ mod app {
     }
 
     fn reset_to_bootsel() -> ! {
-        // Taken from jannic/rp2040-panic-usb-boot - not quite sure what
-        // here is strictly necessary and what can be removed.
-        cortex_m::interrupt::disable();
-        let p = unsafe { rp2040_hal::pac::Peripherals::steal() };
-        if !(p.XOSC.status.read().stable().bit()) {
-            p.XOSC.startup.write(|w| unsafe {
-                w.delay().bits((12_000 /*kHz*/ + 128) / 256)
-            });
-            p.XOSC.ctrl.write(|w| {
-                w.freq_range()
-                    .variant(rp2040_hal::pac::xosc::ctrl::FREQ_RANGE_A::_1_15MHZ)
-                    .enable()
-                    .variant(rp2040_hal::pac::xosc::ctrl::ENABLE_A::ENABLE)
-            });
-            while !(p.XOSC.status.read().stable().bit()) {}
+        if cfg!(debug_assertions) {
+            rp2040_hal::rom_data::reset_to_usb_boot(0, 0);
+        } else {
+            // In release versions - use only PICOBOOT interface and not mass storage.
+            rp2040_hal::rom_data::reset_to_usb_boot(0, 1);
         }
-
-        rp2040_hal::rom_data::reset_to_usb_boot(0, 0);
         loop {}
     }
 
@@ -166,10 +158,18 @@ mod app {
 
     #[task(shared = [usb_device, usb_hid, rotary_encoder, switch_pin])]
     fn usb_hid_task(mut cx: usb_hid_task::Context) {
+        let mut _mute_debounce_delay_ms: u32 = 0;
         let report =
             (cx.shared.rotary_encoder, cx.shared.switch_pin).lock(|rotary_encoder, switch_pin| {
                 // Assemble volume control report
                 let switch_pin_state = switch_pin.is_low().unwrap_or(false);
+                #[cfg(feature = "safe-muting")] 
+                {
+                    // Optional feature - delay HID task by 0.5 secs after muting/unmuting, to prevent bouncing.
+                    if switch_pin_state {
+                        _mute_debounce_delay_ms = 500;
+                    }
+                }
                 let direction = rotary_encoder.update().unwrap_or(Direction::None);
 
                 VolumeControlReport {
@@ -183,7 +183,7 @@ mod app {
             .usb_hid
             .lock(|usb_hid| usb_hid.interface().write_report(&report))
             .ok();
-        usb_hid_task::spawn_after(ExtU64::millis(u64::from(HID_REPORTING_INTERVAL))).ok();
+        usb_hid_task::spawn_after(ExtU64::millis(u64::from(_mute_debounce_delay_ms + HID_REPORTING_INTERVAL))).ok();
     }
 
     #[task(priority = 1, local = [led])]
