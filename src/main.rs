@@ -15,12 +15,13 @@ mod app {
     use embedded_hal::digital::v2::ToggleableOutputPin;
 
     use rp2040_hal as hal;
+    use rp2040_monotonic::fugit::ExtU64;
     use rp2040_monotonic::*;
 
     use hal::usb::UsbBus;
     use usb_device::{class_prelude::*, prelude::*};
 
-    use crate::hid::{VolumeControlInterface, VolumeControlReport};
+    use crate::hid::{VolumeControlInterface, VolumeControlReport, HID_REPORTING_INTERVAL};
     use usbd_human_interface_device::hid_class::prelude::*;
 
     use frunk::HList;
@@ -155,7 +156,6 @@ mod app {
         loop {}
     }
 
-
     #[task(binds = USBCTRL_IRQ, priority = 3, shared = [usb_device, usb_hid])]
     fn on_usb(cx: on_usb::Context) {
         debug!("Entered USB IRQ");
@@ -166,27 +166,30 @@ mod app {
 
     #[task(shared = [usb_device, usb_hid, rotary_encoder, switch_pin])]
     fn usb_hid_task(mut cx: usb_hid_task::Context) {
-        let report = (cx.shared.rotary_encoder, cx.shared.switch_pin).lock(
-            |rotary_encoder, switch_pin| {
+        let report =
+            (cx.shared.rotary_encoder, cx.shared.switch_pin).lock(|rotary_encoder, switch_pin| {
                 // Assemble volume control report
                 let switch_pin_state = switch_pin.is_low().unwrap_or(false);
                 let direction = rotary_encoder.update().unwrap_or(Direction::None);
 
                 VolumeControlReport {
-                        mute: switch_pin_state,
-                        volume_increment: direction == Direction::Clockwise,
-                        volume_decrement: direction == Direction::CounterClockwise,
+                    mute: switch_pin_state,
+                    volume_increment: direction == Direction::Clockwise,
+                    volume_decrement: direction == Direction::CounterClockwise,
                 }
             });
-        
-        cx.shared.usb_hid.lock(|usb_hid| usb_hid.interface().write_report(&report)).ok();
-        usb_hid_task::spawn_after(8.millis()).ok(); // TODO - figure out millis type
+
+        cx.shared
+            .usb_hid
+            .lock(|usb_hid| usb_hid.interface().write_report(&report))
+            .ok();
+        usb_hid_task::spawn_after(ExtU64::millis(u64::from(HID_REPORTING_INTERVAL))).ok();
     }
 
     #[task(priority = 1, local = [led])]
     fn toggle_led(cx: toggle_led::Context, blink: bool) {
         if blink {
-            toggle_led::spawn_after(100.millis(), false).ok();
+            toggle_led::spawn_after(ExtU64::millis(100), false).ok();
         }
         cx.local.led.toggle().ok();
     }
