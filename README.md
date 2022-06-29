@@ -45,10 +45,13 @@ Building
 ```
 
 ## Recovery (BOOTSEL)
-In case flashing fails catastrophically, or for some other reason the device does not boot into the application or PICOBOOT mode - it is possible to force it into BOOTSEL mode, by shorting the small pad on the top left corner of the board (in orange) to any ground pad (in black) with a paper clip or conductor of your choice.
+In case flashing fails catastrophically, or for some other reason the device does not boot into the application or PICOBOOT mode - it is possible to force it into BOOTSEL mode, by shorting the small pad on the top left corner of the board (in orange) to any ground pad (in black) with a paper clip or conductor of your choice while connecting to the USB port.
 <p align="center">
-  <img width="700" alt="Screen Shot 2022-06-29 at 23 33 26" src="https://user-images.githubusercontent.com/12571311/176540134-5fb2eb1f-4bc4-4612-9694-0a9b7fd55e6c.png">  
+  <img width="600" alt="Screen Shot 2022-06-29 at 23 33 26" src="https://user-images.githubusercontent.com/12571311/176540134-5fb2eb1f-4bc4-4612-9694-0a9b7fd55e6c.png">  
 </p>
+
+This will cause the _volume.control_ board to boot to BOOTSEL mode, in which both the PICOBOOT interface and a Mass Storage Device interface will be available, allowing you to update it like you would a Raspberry Pi Pico or any equivalent board with a BOOTSEL button.
+
 
 > *pini//grigio*
 >
