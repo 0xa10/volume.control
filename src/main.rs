@@ -18,7 +18,7 @@ mod app {
     use embedded_hal::digital::v2::InputPin;
 
     use rp2040_hal as hal;
-    use crate::boards::rpini2040 as board; // Set the target board here
+    use crate::boards::rev_ii as board; // Set the target board here
 
     use rp2040_monotonic::fugit::ExtU64;
     use rp2040_monotonic::*;
