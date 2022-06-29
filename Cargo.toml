@@ -1,7 +1,7 @@
 [package]
-name = "rp2040-volume-knob-rtic"
+name = "volume-control"
 license = "Unlicense"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [features]
@@ -19,11 +19,10 @@ defmt-rtt = "0.3.0"
 panic-halt= "0.2.0"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
 
-rp-pico = "0.4.1"
-
 rp2040-monotonic = "1.0.0"
 rp2040-hal = { version="0.5.0", features=["rt"] }
 rp2040-boot2 = "0.2.0"
+rp-pico = "0.4.1"
 
 usb-device = "0.2.8"
 usbd-human-interface-device = "0.2.1"
