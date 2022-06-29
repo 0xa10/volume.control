@@ -1,61 +1,55 @@
-# RP2040 volume control - RTIC
+# volume.control
+<p align="center">
+  <img align="center" width="600" alt="image" src="https://user-images.githubusercontent.com/12571311/176518111-1d384960-3244-4e97-bb6d-da6cd057f339.png">
+</p>
 
-This is a more intricate version of the [rp2040-volume-knob][https://github.com/0xa10/rp2040-volume-knob] using the RTIC framwork.
-Everything is essentialy the same, except no more unsafe code and no more interrupt-free closures - the RTIC framework provides a dispatcher.
+A minimal implementation of a USB volume knob, utilizing a rotary encoder (volume increment, decrement) with a switch (mute).
+This firmware targets the specially crafted _volume.control_ board, which is based on the [RP2040](https://www.raspberrypi.com/documentation/microcontrollers/rp2040.html) MCU.
 
-# Usage
-## Deployment
-The project is already configured with elf2uf2-rs as a runner, which means you can just plug in your Pico in update mode and run using 
-```bash
-cargo run
+The firmware itself is based solely on [embedded Rust](https://docs.rust-embedded.org/book), and makes use of the Real-Time Interrupt-Driven Concurrency, or [RTIC](https://rtic.rs) framework.
+
+The host volume is controlled in the same way as it is controlled by keyboard media keys - by presenting the host with a USB-HID device, and dispatching Consumer Control HID reports indicating the Volume Increment `0xE9` , Volume Decrement `0xEA` and Mute `0xE2` Usage IDs.
+
+USB-HID functionality is provided by @dlkj's [usbd-human-interface-device](https://github.com/dlkj/usbd-human-interface-device) library, and by implementing a minimal, single-byte report descriptor:
+
+<p align="center">
+  <img width="600" alt="image" src="https://user-images.githubusercontent.com/12571311/176538717-6e71ff1e-bda7-45d1-9e64-d1fc09fbefae.png">
+</p>
+
+
+
+
+
+
+## Flashing firmware (PICOBOOT)
+The latest firmware release can be found in the [releases page](https://github.com/0xa10/volume.control/releases/latest).
+
+To flash a new firmware to the _volume.control_ board - keep the mute button pressed while plugging the _volume.control_ into your host USB.
+The device should boot into PICOBOOT mode, which allows for updates using [picotool](https://github.com/raspberrypi/picotool).
+
+![flashing](https://user-images.githubusercontent.com/12571311/176535397-c8421733-3d41-4e91-8f2a-091a3b3415c3.gif)
+
+
+
+
+
+
+
+## Building
+Building 
+```zsh
+➜  ~ git clone https://github.com/0xa10/volume.control
+➜  volume.control git:(main) ✗ cargo build --release                                        
+    Finished release [optimized] target(s) in 0.03s
+➜  volume.control git:(main) ✗ elf2uf2-rs target/thumbv6m-none-eabi/release/volume-control volume-control.uf2
 ```
 
-## Debugging
-No UART output is available, the logs are printed out using defmt-rtt, which you can see using probe-run, but if you want to
-debug too, you need to set up openocd, either on your own probe or on a Raspberry Pi (which is what I opted to do).
-This allowed me to build, deploy and debug from my M1 Mac.
+## Recovery (BOOTSEL)
+In case flashing fails catastrophically, or for some other reason the device does not boot into the application or PICOBOOT mode - it is possible to force it into BOOTSEL mode, by shorting the small pad on the top left corner of the board (in orange) to any ground pad (in black) with a paper clip or conductor of your choice.
+<p align="center">
+  <img width="700" alt="Screen Shot 2022-06-29 at 23 33 26" src="https://user-images.githubusercontent.com/12571311/176540134-5fb2eb1f-4bc4-4612-9694-0a9b7fd55e6c.png">  
+</p>
 
-Follow section 5.1 in [Getting started with Pico](https://datasheets.raspberrypi.com/pico/getting-started-with-pico.pdf) to build openocd.
-
-Hook up the SWD pins as following:
-| Raspberry Pi host | Pico target |
-|:-:|:-:|
-| GND (pin 20) | SWD GND |
-| GPIO24 (pin 18) | SWDIO |
-| GPIO25 (pin 22) | SWDCLK |
-
-Run openocd on the Raspberry Pi host, binding to an external interface for the remote debugging:
-```bash 
-openocd -f interface/raspberrypi-swd.cfg -f target/rp2040.cfg -c "bindto 0.0.0.0"
-```
-
-Now connect using gdb, setting the target binary and the remote (extended) debugging stub, setting RPI_IP to your Pi's address
-```bash
-gdb-multiarch -ex "target extended-remote $RPI_IP:3333" target/thumbv6m-none-eabi/debug/rp2040-volume-knob
-```
-Since I'm on an M1 mac with no gdb-multiarch, I use an Ubuntu VM with multipass, with my home folder mounted inside the VM.
-
-You are now debugging the target, and can use monitor commands such as `monitor reset init` to restart the target, or `load` with our without a path to load a new .elf file.
-To get defmt logs out - you need to extract the location of the RTT control block using the following command:
-```bash
-$ rust-nm -S target/thumbv6m-none-eabi/debug/rp2040-volume-knob | grep RTT # requires cargo-binutils
-2003fae8 00000030 D _SEGGER_RTT
-```
-In the above case, the control block is as 0x2003fae8 and is 0x30 bytes in size.
-
-Using this, we can ask (via gdb) the openocd monitor to set up a rtt source on a tcp address, using the following gdb commands:
-```
-monitor rtt server start 8765 0
-monitor rtt setup 0x2003fae8 0x30 "SEGGER RTT"
-monitor rtt start
-```
-At which points - the RTT server will be listening on the *RPi* (not localhost), and you can stream its output into
-```bash
-nc 192.168.1.148 8765 | defmt-print -e target/thumbv6m-none-eabi/debug/rp2040-volume-knob
-```
-
-
-
-
-
-
+> *pini//grigio*
+>
+> 2022
