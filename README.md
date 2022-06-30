@@ -21,11 +21,11 @@ USB-HID functionality is provided by @dlkj's [usbd-human-interface-device](https
 
 
 
-## Flashing firmware (PICOBOOT)
+## Flashing firmware (`PICOBOOT`)
 The latest firmware release can be found in the [releases page](https://github.com/0xa10/volume.control/releases/latest).
 
 To flash a new firmware to the _volume.control_ board - keep the mute button pressed while plugging the _volume.control_ into your host USB.
-The device should boot into PICOBOOT mode, which allows for updates using [picotool](https://github.com/raspberrypi/picotool).
+The device should boot into  `PICOBOOT` mode, which allows for updates using [picotool](https://github.com/raspberrypi/picotool).
 
 ![flashing](https://user-images.githubusercontent.com/12571311/176535397-c8421733-3d41-4e91-8f2a-091a3b3415c3.gif)
 
@@ -48,13 +48,13 @@ Building the firmware yourself is kept simple thanks to Cargo and elf2uf-rs:
 
 
 
-## Recovery (BOOTSEL)
-In case flashing fails catastrophically, or for some other reason the device does not boot into the application or PICOBOOT mode - it is possible to force it into BOOTSEL mode, by shorting the small pad on the top left corner of the board (orange arrow) to any ground pad (gray arrows) with a paper clip or conductor of your choice - whilst plugging into the USB port.
+## Recovery (`BOOTSEL`)
+In case flashing fails catastrophically, or for some other reason the device does not boot into the application or `PICOBOOT` mode - it is possible to force it into `BOOTSEL` mode, by shorting the small pad on the top left corner of the board (orange arrow) to any ground pad (gray arrows) with a paper clip or conductor of your choice - whilst plugging into the USB port.
 <p align="center">
   <img width="600" alt="Screen Shot 2022-06-29 at 23 33 26" src="https://user-images.githubusercontent.com/12571311/176540134-5fb2eb1f-4bc4-4612-9694-0a9b7fd55e6c.png">  
 </p>
 
-This will cause the _volume.control_ board to boot to BOOTSEL mode, in which both the PICOBOOT interface and a Mass Storage Device interface will be available, allowing you to update it like you would a Raspberry Pi Pico or any equivalent board with a BOOTSEL button.
+This will cause the _volume.control_ board to boot to `BOOTSEL` mode, in which both the `PICOBOOT` interface and a Mass Storage Device interface will be available, allowing you to update it like you would a Raspberry Pi Pico or any equivalent board with a `BOOTSEL` button.
 
 
 > *pini//grigio*
