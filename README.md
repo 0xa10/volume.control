@@ -36,7 +36,7 @@ The device should boot into PICOBOOT mode, which allows for updates using [picot
 
 
 ## Building
-Building 
+Building the firmware yourself is kept simple thanks to Cargo and elf2uf-rs:
 ```zsh
 ➜  ~ git clone https://github.com/0xa10/volume.control
 ➜  volume.control git:(main) ✗ cargo build --release                                        
@@ -44,8 +44,12 @@ Building
 ➜  volume.control git:(main) ✗ elf2uf2-rs target/thumbv6m-none-eabi/release/volume-control volume-control.uf2
 ```
 
+
+
+
+
 ## Recovery (BOOTSEL)
-In case flashing fails catastrophically, or for some other reason the device does not boot into the application or PICOBOOT mode - it is possible to force it into BOOTSEL mode, by shorting the small pad on the top left corner of the board (in orange) to any ground pad (in black) with a paper clip or conductor of your choice while connecting to the USB port.
+In case flashing fails catastrophically, or for some other reason the device does not boot into the application or PICOBOOT mode - it is possible to force it into BOOTSEL mode, by shorting the small pad on the top left corner of the board (orange arrow) to any ground pad (gray arrows) with a paper clip or conductor of your choice - whilst plugging into the USB port.
 <p align="center">
   <img width="600" alt="Screen Shot 2022-06-29 at 23 33 26" src="https://user-images.githubusercontent.com/12571311/176540134-5fb2eb1f-4bc4-4612-9694-0a9b7fd55e6c.png">  
 </p>
