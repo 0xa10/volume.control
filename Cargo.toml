@@ -6,6 +6,7 @@ edition = "2021"
 
 [features]
 safe-muting = []
+watchdog = []
 
 [dependencies]
 cortex-m = "0.7.3"
