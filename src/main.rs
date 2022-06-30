@@ -3,13 +3,13 @@
 
 #[cfg(debug_assertions)]
 use defmt_rtt as _;
-#[cfg(debug_assertions)]
-use panic_probe as _;
 #[cfg(not(debug_assertions))]
 use panic_halt as _;
+#[cfg(debug_assertions)]
+use panic_probe as _;
 
-mod hid;
 mod boards;
+mod hid;
 
 #[rtic::app(device = board::pac, peripherals = true, dispatchers = [XIP_IRQ])]
 mod app {
@@ -17,8 +17,8 @@ mod app {
     use defmt::{debug, info};
     use embedded_hal::digital::v2::InputPin;
 
-    use rp2040_hal as hal;
-    use crate::boards::rev_ii as board; // Set the target board here
+    use crate::boards::rev_ii as board;
+    use rp2040_hal as hal; // Set the target board here
 
     use rp2040_monotonic::fugit::ExtU64;
     use rp2040_monotonic::*;
@@ -45,8 +45,7 @@ mod app {
     }
 
     #[local]
-    struct Local {
-    }
+    struct Local {}
 
     #[init(local = [
 			usb_bus: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit(),
@@ -76,7 +75,6 @@ mod app {
             sio.gpio_bank0,
             &mut resets,
         );
-
 
         // Rotary encoder GPIO setup
         let rotary_dt = pins.dt.into_mode();
@@ -124,7 +122,7 @@ mod app {
                 switch_pin,
                 rotary_encoder,
             },
-            Local { },
+            Local {},
             init::Monotonics(Rp2040Monotonic::new(cx.device.TIMER)),
         )
     }
@@ -154,7 +152,7 @@ mod app {
             (cx.shared.rotary_encoder, cx.shared.switch_pin).lock(|rotary_encoder, switch_pin| {
                 // Assemble volume control report
                 let switch_pin_state = switch_pin.is_low().unwrap_or(false);
-                #[cfg(feature = "safe-muting")] 
+                #[cfg(feature = "safe-muting")]
                 {
                     // Optional feature - delay HID task by 0.1 secs after muting/unmuting, to prevent bouncing.
                     if switch_pin_state {
@@ -174,6 +172,9 @@ mod app {
             .usb_hid
             .lock(|usb_hid| usb_hid.interface().write_report(&report))
             .ok();
-        usb_hid_task::spawn_after(ExtU64::millis(u64::from(_mute_debounce_delay_ms + HID_REPORTING_INTERVAL))).ok();
+        usb_hid_task::spawn_after(ExtU64::millis(u64::from(
+            _mute_debounce_delay_ms + HID_REPORTING_INTERVAL,
+        )))
+        .ok();
     }
 }

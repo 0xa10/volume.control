@@ -11,23 +11,16 @@ pub use rp_pico::hal::pac;
 hal::bsp_pins!(
     Gpio20 {
         name: switch,
-        aliases: {
-            PullUpInput: EncoderSwitchPin
-        }
+        aliases: { PullUpInput: EncoderSwitchPin }
     },
     Gpio19 {
         name: clk,
-        aliases: {
-            PullUpInput: EncoderCLKPin
-        }
+        aliases: { PullUpInput: EncoderCLKPin }
     },
     Gpio18 {
         name: dt,
-        aliases: {
-            PullUpInput: EncoderDTPin
-        }
+        aliases: { PullUpInput: EncoderDTPin }
     },
-
 );
 
 pub const XOSC_CRYSTAL_FREQ: u32 = 12_000_000;
