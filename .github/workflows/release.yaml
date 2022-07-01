@@ -35,7 +35,9 @@ jobs:
         run: elf2uf2-rs target/${{env.target}}/release/volume-control volume-control.uf2
       - name: Zip UF2
         run: zip volume-control.zip volume-control.uf2
-      - uses: actions/create-release@v1
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
