@@ -16,6 +16,8 @@ mod app {
     use core::mem::MaybeUninit;
     use defmt::{debug, info};
     use embedded_hal::digital::v2::InputPin;
+    use embedded_hal::prelude::*;
+    use embedded_time::duration::Extensions;
 
     use crate::boards::rev_ii as board;
     use rp2040_hal as hal; // Set the target board here
@@ -36,6 +38,8 @@ mod app {
     #[monotonic(binds = TIMER_IRQ_0, default = true)]
     type Monotonic = Rp2040Monotonic;
 
+    const WATCHDOG_INTERVAL_MICROS: u32 = HID_REPORTING_INTERVAL;
+
     #[shared]
     struct Shared {
         usb_hid: UsbHidClass<UsbBus, HList!(VolumeControlInterface<'static, UsbBus>,)>,
@@ -45,7 +49,9 @@ mod app {
     }
 
     #[local]
-    struct Local {}
+    struct Local {
+        watchdog: hal::watchdog::Watchdog,
+    }
 
     #[init(local = [
 			usb_bus: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit(),
@@ -114,7 +120,14 @@ mod app {
         // HID task setup
         usb_hid_task::spawn().ok();
 
-        // Init done
+        #[cfg(feature = "watchdog")]
+        {
+            info!("Starting watchdog.");
+            watchdog.start((WATCHDOG_INTERVAL_MICROS).microseconds());
+            feed_watchdog::spawn().ok();
+        }
+
+        info!("Init complete, starting.");
         (
             Shared {
                 usb_hid,
@@ -122,7 +135,7 @@ mod app {
                 switch_pin,
                 rotary_encoder,
             },
-            Local {},
+            Local { watchdog },
             init::Monotonics(Rp2040Monotonic::new(cx.device.TIMER)),
         )
     }
@@ -176,5 +189,14 @@ mod app {
             _mute_debounce_delay_ms + HID_REPORTING_INTERVAL,
         )))
         .ok();
+    }
+
+    #[task(priority = 1, local = [watchdog])]
+    fn feed_watchdog(cx: feed_watchdog::Context) {
+        let watchdog = cx.local.watchdog;
+
+        watchdog.feed();
+        feed_watchdog::spawn_after(ExtU64::micros(u64::from(WATCHDOG_INTERVAL_MICROS / 2))).ok();
+        // Watchdog will be triggered if we miss two feeds
     }
 }
