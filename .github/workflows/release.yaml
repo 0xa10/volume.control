@@ -23,16 +23,32 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: install
-          args: flip-link
+          args: flip-link elf2uf2-rs
       - uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release
       - name: Convert to uf2
         run: elf2uf2-rs target/${{env.target}}/release/volume-control volume-control.uf2
-      - uses: actions/upload-artifact@v3
+      - name: Zip UF2
+        run: zip volume-control.zip volume-control.uf2
+      - uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: volume-control-${{ github.event.release.tag_name }}
-          path: volume-control.uf2
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+      - name: Upload Release Asset
+        id: upload-release-asset 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ./volume-control.zip
+          asset_name: volume-control.zip
+          asset_content_type: application/zip
           
       
