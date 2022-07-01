@@ -17,6 +17,7 @@ mod app {
     use defmt::{debug, info};
     use embedded_hal::digital::v2::InputPin;
     use embedded_hal::prelude::*;
+    use embedded_time::duration::Extensions;
 
     use crate::boards::rev_ii as board;
     use rp2040_hal as hal; // Set the target board here
