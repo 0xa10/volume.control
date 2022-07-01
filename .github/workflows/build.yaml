@@ -4,6 +4,7 @@ on: push
 
 env:
   CARGO_TERM_COLOR: always
+  target: thumbv6m-none-eabi
 
 jobs:
   build:
@@ -13,7 +14,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          target: thumbv6m-none-eabi
+          target: ${{env.target}}
           override: true
           profile: minimal
       - uses: Swatinem/rust-cache@v1
@@ -24,3 +25,10 @@ jobs:
         with:
           command: build
           args: --release
+      - uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: |
+            target/${{env.target}}/debug/volume-control 
+            target/${{env.target}}/release/volume-control 
+      
