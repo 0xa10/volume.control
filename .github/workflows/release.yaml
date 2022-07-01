@@ -1,0 +1,38 @@
+name: Release
+
+on: 
+  push:
+    tags:
+      v*
+
+env:
+  CARGO_TERM_COLOR: always
+  target: thumbv6m-none-eabi
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{env.target}}
+          override: true
+          profile: minimal
+      - uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: flip-link
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - name: Convert to uf2
+        run: elf2uf2-rs target/${{env.target}}/release/volume-control volume-control.uf2
+      - uses: actions/upload-artifact@v3
+        with:
+          name: volume-control-${{ github.event.release.tag_name }}
+          path: volume-control.uf2
+          
+      
