@@ -17,6 +17,7 @@ mod app {
     use defmt::{debug, info};
     use embedded_hal::digital::v2::InputPin;
     use embedded_hal::prelude::*;
+    #[cfg(feature = "watchdog")]
     use embedded_time::duration::Extensions;
 
     use crate::boards::rev_ii as board;
@@ -44,13 +45,13 @@ mod app {
     struct Shared {
         usb_hid: UsbHidClass<UsbBus, HList!(VolumeControlInterface<'static, UsbBus>,)>,
         usb_device: UsbDevice<'static, UsbBus>,
-        switch_pin: board::SwitchPin,
-        rotary_encoder: Rotary<board::DTPin, board::CLKPin>,
     }
 
     #[local]
     struct Local {
         watchdog: hal::watchdog::Watchdog,
+        switch_pin: board::SwitchPin,
+        rotary_encoder: Rotary<board::DTPin, board::CLKPin>,
     }
 
     #[init(local = [
@@ -132,10 +133,12 @@ mod app {
             Shared {
                 usb_hid,
                 usb_device,
+            },
+            Local {
+                watchdog,
                 switch_pin,
                 rotary_encoder,
             },
-            Local { watchdog },
             init::Monotonics(Rp2040Monotonic::new(cx.device.TIMER)),
         )
     }
@@ -158,28 +161,28 @@ mod app {
         });
     }
 
-    #[task(shared = [usb_device, usb_hid, rotary_encoder, switch_pin])]
+    #[task(shared = [usb_device, usb_hid], local=[rotary_encoder, switch_pin])]
     fn usb_hid_task(mut cx: usb_hid_task::Context) {
+        let switch_pin = cx.local.switch_pin;
+        let rotary_encoder = cx.local.rotary_encoder;
         let mut _mute_debounce_delay_ms: u32 = 0;
-        let report =
-            (cx.shared.rotary_encoder, cx.shared.switch_pin).lock(|rotary_encoder, switch_pin| {
-                // Assemble volume control report
-                let switch_pin_state = switch_pin.is_low().unwrap_or(false);
-                #[cfg(feature = "safe-muting")]
-                {
-                    // Optional feature - delay HID task by 0.1 secs after muting/unmuting, to prevent bouncing.
-                    if switch_pin_state {
-                        _mute_debounce_delay_ms = 100;
-                    }
-                }
-                let direction = rotary_encoder.update().unwrap_or(Direction::None);
 
-                VolumeControlReport {
-                    mute: switch_pin_state,
-                    volume_increment: direction == Direction::Clockwise,
-                    volume_decrement: direction == Direction::CounterClockwise,
-                }
-            });
+        // Assemble volume control report
+        let switch_pin_state = switch_pin.is_low().unwrap_or(false);
+        #[cfg(feature = "safe-muting")]
+        {
+            // Optional feature - delay HID task by 0.1 secs after muting/unmuting, to prevent bouncing.
+            if switch_pin_state {
+                _mute_debounce_delay_ms = 100;
+            }
+        }
+        let direction = rotary_encoder.update().unwrap_or(Direction::None);
+
+        let report = VolumeControlReport {
+            mute: switch_pin_state,
+            volume_increment: direction == Direction::Clockwise,
+            volume_decrement: direction == Direction::CounterClockwise,
+        };
 
         cx.shared
             .usb_hid
