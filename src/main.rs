@@ -115,7 +115,7 @@ mod app {
             .manufacturer("pini.grigio")
             .product("volume.control")
             .max_packet_size_0(64)
-            .max_power(500)
+            .max_power(100)
             .build();
 
         // HID task setup
