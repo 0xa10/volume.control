@@ -24,11 +24,11 @@ const VOLUME_CONTROL_DESCRIPTOR: &[u8] = &[
     0x15, 0x00, //            Logical Minimum (0)  
     0x25, 0x01, //            Logical Maximum (1)  
     0x75, 0x01, //            Report Size (1)  
-    0x95, 0x07, //            Report Count (3)  
+    0x95, 0x03, //            Report Count (3)  
     0x09, 0xE2, //            Usage (Mute)  
     0x09, 0xE9, //            Usage (Volume Increment)  
     0x09, 0xEA, //            Usage (Volume Decrement)  
-    0x81, 0x02, //            Input (Data,Var,Abs,NWrp,Lin,Pref,NNul,Bit)  
+    0x81, 0x06, //            Input (Data,Var,Abs,NWrp,Lin,Pref,NNul,Bit)  
     0x95, 0x01, //            Report Count (5)  
     0x81, 0x01, //            Input (Const,Ary,Abs)  
     0xC0, //        End Collection
