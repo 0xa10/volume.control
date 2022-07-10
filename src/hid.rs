@@ -28,8 +28,8 @@ const VOLUME_CONTROL_DESCRIPTOR: &[u8] = &[
     0x09, 0xE2, //            Usage (Mute)  
     0x09, 0xE9, //            Usage (Volume Increment)  
     0x09, 0xEA, //            Usage (Volume Decrement)  
-    0x81, 0x02, //            Input (Data,Var,Abs,NWrp,Lin,Pref,NNul,Bit)  
-    0x95, 0x01, //            Report Count (5)  
+    0x81, 0x06, //            Input (Data,Var,Abs,NWrp,Lin,NPref,NNul,Byte)
+    0x95, 0x05, //            Report Count (5)  
     0x81, 0x01, //            Input (Const,Ary,Abs)  
     0xC0, //        End Collection
 ];
